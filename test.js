@@ -109,6 +109,82 @@ function testTickStartCurrentBlock() {
 }
 
 /**
+ * Ajusta un bloque para que el tick lo lleve inmediatamente a live.
+ *
+ * @param {string|number} blockId
+ */
+function forceBlockIntoLiveWindow(blockId) {
+  const now = new Date();
+  const start = addMinutes(now, -1);
+  const close = addMinutes(now, 14);
+  const hard = addMinutes(now, 17);
+  const end = addMinutes(now, 19);
+
+  updateBlock(blockId, {
+    status: 'scheduled',
+    start_ts: start,
+    close_signal_ts: close,
+    hard_close_ts: hard,
+    end_ts: end,
+    published_at: '',
+    closed_at: '',
+    advance_done: false,
+  });
+}
+
+/**
+ * Deja el bloque 1 de grupos en live para probar Mi Jornada
+ * sin recorrer el campeonato completo.
+ *
+ * Flujo:
+ * 1. genera fase de grupos limpia
+ * 2. fuerza el bloque 1 a ventana activa
+ * 3. ejecuta tick para que pase a live
+ * 4. registra un resumen de participantes del bloque
+ */
+function testPrepareLiveGroupsBlockForMyDay() {
+  setupGroupStage();
+  setConfigValue('current_block_id', 1, 'Bloque actual');
+  setConfigValue('tournament_status', 'running_groups', 'Estado actual del torneo');
+
+  forceBlockIntoLiveWindow(1);
+  tickTournamentClock();
+
+  const current = getCurrentBlock();
+  if (!current) {
+    throw new Error('No se pudo activar el bloque 1 de grupos.');
+  }
+
+  Logger.log('Bloque actual: %s', JSON.stringify(current));
+  Logger.log('Resumen matches: %s', JSON.stringify(getMatchSummaryByBlock(current.block_id)));
+  logCurrentBlockParticipants();
+}
+
+/**
+ * Lista jugadores/arbitros del bloque actual para facilitar pruebas en Mi Jornada.
+ */
+function logCurrentBlockParticipants() {
+  const current = getCurrentBlock();
+  if (!current) throw new Error('No hay bloque actual.');
+
+  const matches = getMatchesByBlock(current.block_id).slice().sort((a, b) =>
+    Number(a.table_no || 999) - Number(b.table_no || 999)
+  );
+
+  matches.forEach(match => {
+    Logger.log(
+      'Mesa %s | match %s | %s vs %s | arbitro %s | status=%s',
+      match.table_no,
+      match.match_id,
+      match.player_a_id,
+      match.player_b_id,
+      match.referee_player_id || '-',
+      match.status
+    );
+  });
+}
+
+/**
  * Fuerza que el bloque actual entre en closing
  * y ejecuta tick.
  */
