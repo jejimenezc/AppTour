@@ -300,22 +300,47 @@ function assignTablesAndMatchOrderForGroupMatches(matches) {
 
 /**
  * Devuelve la fecha/hora de inicio del torneo.
- * Si existe Config.tournament_start_ts, la usa.
- * Si no, usa hoy 09:00:00.
+ * Requiere Config.tournament_start_ts con un valor parseable.
  *
  * @returns {Date}
  */
 function getTournamentStartDate() {
   const raw = getConfigValue('tournament_start_ts');
+  const value = String(raw || '').trim();
 
-  if (raw) {
-    const d = new Date(raw);
-    if (!Number.isNaN(d.getTime())) return d;
+  if (!value) {
+    throw new Error('Falta Config.tournament_start_ts. Define una fecha/hora base del torneo antes de generar bloques.');
   }
 
-  const now = new Date();
-  now.setHours(9, 0, 0, 0);
-  return now;
+  const parsed = parseTournamentStartDateValue_(value);
+  if (!parsed) {
+    throw new Error(`Config.tournament_start_ts no es valida: "${value}". Usa un formato parseable, por ejemplo 2026-04-18 13:20:00.`);
+  }
+
+  return parsed;
+}
+
+/**
+ * Parsea tournament_start_ts aceptando Date real y strings comunes del proyecto.
+ *
+ * @param {string|Date} value
+ * @returns {Date|null}
+ */
+function parseTournamentStartDateValue_(value) {
+  if (Object.prototype.toString.call(value) === '[object Date]') {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+
+  const text = String(value || '').trim();
+  if (!text) return null;
+
+  const blockDate = parseBlockDate(text);
+  if (blockDate) return blockDate;
+
+  const nativeDate = new Date(text);
+  if (!Number.isNaN(nativeDate.getTime())) return nativeDate;
+
+  return null;
 }
 
 /**
