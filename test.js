@@ -268,6 +268,35 @@ function testTickFinishAndActivateNext() {
 }
 
 /**
+ * Verifica que tickTournamentClock haga catch-up completo cuando llega tarde.
+ * Un bloque que siga en live despues de end_ts debe pasar por transition y cerrarse.
+ */
+function testTickCatchUpPastEnd() {
+  const current = getCurrentBlock();
+  if (!current) throw new Error('No hay current_block_id configurado.');
+
+  const now = new Date();
+  const start = addMinutes(now, -21);
+  const close = addMinutes(now, -6);
+  const hard = addMinutes(now, -3);
+  const end = addMinutes(now, -1);
+
+  updateBlock(current.block_id, {
+    status: 'live',
+    start_ts: start,
+    close_signal_ts: close,
+    hard_close_ts: hard,
+    end_ts: end,
+  });
+
+  tickTournamentClock();
+
+  Logger.log('Bloque tras catch-up: %s', JSON.stringify(getBlockById(current.block_id)));
+  Logger.log('Nuevo current_block_id: %s', getConfigValue('current_block_id'));
+  Logger.log('Bloque actual tras catch-up: %s', JSON.stringify(getCurrentBlock()));
+}
+
+/**
  * Ejecuta la secuencia completa de smoke test del reloj.
  */
 function runClockSmokeTests() {

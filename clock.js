@@ -15,29 +15,36 @@ function tickTournamentClock() {
   const hardCloseTs = parseBlockDate(currentBlock.hard_close_ts);
   const endTs = parseBlockDate(currentBlock.end_ts);
 
-  const status = String(currentBlock.status || '').trim();
+  let status = String(currentBlock.status || '').trim();
+  const transitions = [];
 
-  if (status === 'scheduled' && startTs && now >= startTs && now < closeSignalTs) {
+  if (status === 'scheduled' && startTs && now >= startTs) {
     startCurrentBlock(currentBlock.block_id);
-    Logger.log(`Bloque ${currentBlock.block_id} => live`);
-    return;
+    status = 'live';
+    transitions.push('live');
   }
 
-  if (status === 'live' && closeSignalTs && now >= closeSignalTs && now < hardCloseTs) {
+  if (status === 'live' && closeSignalTs && now >= closeSignalTs) {
     enterClosingState(currentBlock.block_id);
-    Logger.log(`Bloque ${currentBlock.block_id} => closing`);
-    return;
+    status = 'closing';
+    transitions.push('closing');
   }
 
-  if ((status === 'live' || status === 'closing') && hardCloseTs && now >= hardCloseTs && now < endTs) {
+  if ((status === 'live' || status === 'closing') && hardCloseTs && now >= hardCloseTs) {
     enterTransitionState(currentBlock.block_id);
-    Logger.log(`Bloque ${currentBlock.block_id} => transition`);
-    return;
+    status = 'transition';
+    transitions.push('transition');
   }
 
   if (status === 'transition' && endTs && now >= endTs) {
     finishCurrentBlockAndMoveNext(currentBlock.block_id);
-    Logger.log(`Bloque ${currentBlock.block_id} => closed`);
+    transitions.push('closed');
+    Logger.log(`Bloque ${currentBlock.block_id} => ${transitions.join(' -> ')}`);
+    return;
+  }
+
+  if (transitions.length) {
+    Logger.log(`Bloque ${currentBlock.block_id} => ${transitions.join(' -> ')}`);
     return;
   }
 
