@@ -198,11 +198,11 @@
     currentMyDayVm = vm;
 
     const root = document.getElementById('myday-content');
-
     const playerRoleUi = getMyDayPlayerRoleUi(vm);
     const matchRoleUi = getMyDayMatchRoleUi(vm);
     const nextCommitment = buildMyDayCommitmentLabel(vm);
     const cta = buildMyDayCta(vm);
+    const matchMeta = vm.currentMatch || null;
 
     let playerBadgeHtml = '';
     if (playerRoleUi.show) {
@@ -217,7 +217,7 @@
       </div>
     `;
 
-    if (vm.currentMatch) {
+    if (matchMeta) {
       let matchBadgeHtml = '';
       if (matchRoleUi.show) {
         matchBadgeHtml = `<span class="status-pill ${matchRoleUi.className}">${escapeHtml(matchRoleUi.label)}</span>`;
@@ -227,8 +227,8 @@
         <div class="card-soft">
           <div class="row-between">
             <div>
-              <span class="badge">Mesa ${escapeHtml(vm.currentMatch.tableNo)}</span>
-              <span class="helper" style="margin-left:8px;">${escapeHtml(vm.currentMatch.phaseLabel)}</span>
+              <span class="badge">Mesa ${escapeHtml(matchMeta.tableNo)}</span>
+              <span class="helper" style="margin-left:8px;">${escapeHtml(matchMeta.phaseLabel)}</span>
             </div>
             ${matchBadgeHtml}
           </div>
@@ -236,7 +236,7 @@
           <div style="margin-top: 12px;">
             <div class="stat-label">Compromiso del bloque</div>
             <div class="stat-value" style="font-size: 18px; margin-top: 8px;">
-              ${escapeHtml(vm.currentMatch.leftLabel)} vs ${escapeHtml(vm.currentMatch.rightLabel)}
+              ${escapeHtml(matchMeta.leftLabel)} vs ${escapeHtml(matchMeta.rightLabel)}
             </div>
             <div class="helper" style="margin-top: 6px;">${escapeHtml(nextCommitment.detail)}</div>
           </div>
@@ -258,6 +258,7 @@
             >
               ${escapeHtml(cta.label)}
             </button>
+            ${cta.helperText ? `<div class="helper" style="margin-top: 8px;">${escapeHtml(cta.helperText)}</div>` : ''}
           </div>
         </div>
       `;
@@ -353,7 +354,7 @@
 
     return (
       status === 'result_submitted' &&
-      (resultMode === 'final' || resultMode === 'closing_state')
+      resultMode === 'final'
     ) || status === 'auto_closed';
   }
 
@@ -584,6 +585,188 @@
     if (!vm || !vm.currentMatch) return 'player';
     if (vm.currentMatch.isReferee) return 'referee';
     return 'player';
+  }
+
+  function buildMyDayCta(vm) {
+    if (!vm.currentMatch) {
+      return {
+        label: 'Sin accion disponible en este bloque',
+        disabled: true,
+        helperText: 'No tienes un partido o arbitraje asignado en este bloque.',
+      };
+    }
+
+    if (isMyDayMatchFinished(vm.currentMatch)) {
+      return {
+        label: 'Partido ya finalizado',
+        disabled: true,
+        helperText: 'La captura queda cerrada porque el partido ya fue registrado.',
+      };
+    }
+
+    const actions = vm.currentMatch.allowedCaptureActions || {};
+
+    if (vm.currentMatch.isReferee && actions.canOpen) {
+      return {
+        label: 'Ingresar resultado',
+        disabled: false,
+        helperText: 'Como arbitro puedes confirmar resultado final o estado de cierre.',
+      };
+    }
+
+    if ((vm.currentMatch.isPlayerA || vm.currentMatch.isPlayerB) && actions.canOpen) {
+      return {
+        label: 'Ingresar resultado',
+        disabled: false,
+        helperText: 'Como jugador puedes ingresar resultado final o un estado parcial de cierre.',
+      };
+    }
+
+    return {
+      label: 'Captura no disponible',
+      disabled: true,
+      helperText: 'La captura se habilita solo cuando el bloque esta en juego o en cierre.',
+    };
+  }
+
+  function openMatchCapture() {
+    if (!currentMyDayVm || !currentMyDayVm.currentMatch) return;
+    if (isMyDayMatchFinished(currentMyDayVm.currentMatch)) return;
+
+    const m = currentMyDayVm.currentMatch;
+    const actions = m.allowedCaptureActions || {};
+    const isReferee = !!m.isReferee;
+
+    if (!actions.canOpen) return;
+
+    const modalTitle = 'Captura de resultado';
+    const modalIntro = isReferee
+      ? 'Selecciona una opcion rapida para registrar el cierre del partido.'
+      : 'Si el partido no termino, puedes dejar un estado parcial para apoyar el cierre del bloque.';
+    const actionPanelsHtml = buildRefereeCapturePanel();
+
+    const html = `
+      <div id="capture-modal-overlay" style="
+        position: fixed;
+        inset: 0;
+        background: rgba(15,23,42,0.6);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+        padding: 16px;
+      ">
+        <div style="
+          background: white;
+          border-radius: 16px;
+          padding: 20px;
+          width: 100%;
+          max-width: 480px;
+          max-height: 90vh;
+          overflow: auto;
+        ">
+          <div style="font-weight:bold; margin-bottom:8px; font-size:18px;">
+            ${escapeHtml(modalTitle)}
+          </div>
+
+          <div style="margin-bottom:12px; font-weight:bold;">
+            ${escapeHtml(m.leftLabel)} vs ${escapeHtml(m.rightLabel)}
+          </div>
+
+          <div class="helper" style="margin-bottom: 16px;">
+            Mesa ${escapeHtml(m.tableNo)} · ${escapeHtml(m.phaseLabel)}
+          </div>
+
+          <div class="helper" style="margin-bottom: 16px;">
+            ${escapeHtml(modalIntro)}
+          </div>
+
+          ${actionPanelsHtml}
+
+          <div style="margin-top:16px;" class="row-between">
+            <button onclick="closeMatchCapture()" style="padding:8px 12px; border-radius:10px; border:1px solid #cbd5e1; background:white; cursor:pointer;">
+              Cerrar
+            </button>
+
+            <div class="helper">${escapeHtml(isReferee ? 'Usa opciones estandar para minimizar errores.' : 'Los resultados capturados por jugadores pueden ser reemplazados por el arbitro.')}</div>
+          </div>
+
+          <div id="capture-error" class="error" style="display:none; margin-top:12px;"></div>
+        </div>
+      </div>
+    `;
+
+    closeMatchCapture();
+    document.body.insertAdjacentHTML('beforeend', html);
+  }
+
+  function buildRefereeCapturePanel() {
+    return `
+      <div class="card-soft" style="margin-bottom: 14px;">
+        <div class="stat-label" style="margin-bottom: 10px;">Resultado final</div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+          <button onclick="submitMatchCaptureFinal(2,0)" style="${captureButtonStyle()}">2-0</button>
+          <button onclick="submitMatchCaptureFinal(2,1)" style="${captureButtonStyle()}">2-1</button>
+          <button onclick="submitMatchCaptureFinal(0,2)" style="${captureButtonStyle()}">0-2</button>
+          <button onclick="submitMatchCaptureFinal(1,2)" style="${captureButtonStyle()}">1-2</button>
+        </div>
+      </div>
+
+      <div class="card-soft">
+        <div class="stat-label" style="margin-bottom: 10px;">Estado de cierre</div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+          <button onclick="submitMatchCaptureClosingState('A_1_0')" style="${captureButtonStyle(true)}">A lidera 1-0</button>
+          <button onclick="submitMatchCaptureClosingState('B_1_0')" style="${captureButtonStyle(true)}">B lidera 1-0</button>
+          <button onclick="submitMatchCaptureClosingState('ONE_ONE')" style="${captureButtonStyle(true)}">Van 1-1</button>
+          <button onclick="submitMatchCaptureClosingState('NOT_STARTED')" style="${captureButtonStyle(true)}">No iniciado</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function buildPlayerCapturePanel(match) {
+    const lastState = formatPlayerFacingCaptureState(match);
+
+    return `
+      <div class="card-soft" style="margin-bottom: 14px;">
+        <div class="stat-label">Estado actual</div>
+        <div class="stat-value" style="font-size: 18px; margin-top: 8px;">${escapeHtml(lastState.title)}</div>
+        <div class="helper" style="margin-top: 8px;">${escapeHtml(lastState.detail)}</div>
+      </div>
+    `;
+  }
+
+  function formatPlayerFacingCaptureState(match) {
+    const status = String(match.matchStatus || '').trim();
+    const resultMode = String(match.resultMode || '').trim();
+    const closingState = String(match.closingState || '').trim();
+
+    if (status === 'result_submitted' && resultMode === 'final') {
+      return {
+        title: 'Resultado final ya ingresado',
+        detail: 'El arbitro ya registro el cierre de este partido.',
+      };
+    }
+
+    if (resultMode === 'closing_state') {
+      return {
+        title: 'Partido en estado de cierre',
+        detail: mapClosingStateLabel(closingState),
+      };
+    }
+
+    return {
+      title: 'Pendiente de captura arbitral',
+      detail: 'Todavia no hay un resultado ingresado para este partido.',
+    };
+  }
+
+  function mapClosingStateLabel(closingState) {
+    if (closingState === 'A_1_0') return 'Se registro que el lado A lidera 1-0.';
+    if (closingState === 'B_1_0') return 'Se registro que el lado B lidera 1-0.';
+    if (closingState === 'ONE_ONE') return 'Se registro empate 1-1.';
+    if (closingState === 'NOT_STARTED') return 'Se registro como no iniciado.';
+    return 'Estado parcial informado por el arbitro.';
   }
 
   function renderMyDayError(error) {

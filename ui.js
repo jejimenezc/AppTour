@@ -93,9 +93,28 @@ function getMyDayViewModel(playerId) {
           matchStatus: String(currentMatch.status || ''),
           resultMode: String(currentMatch.result_mode || ''),
           closingState: String(currentMatch.closing_state || ''),
+          allowedCaptureActions: getAllowedCaptureActions(currentMatch, playerId),
         }
       : null,
     generatedAt: nowIso(),
+  };
+}
+
+function getAllowedCaptureActions(match, playerId) {
+  const actorId = String(playerId || '').trim();
+  const block = getCurrentBlock();
+  const blockStatus = String(block && block.status || '').trim();
+  const isBlockCapturable = blockStatus === 'live' || blockStatus === 'closing';
+  const isReferee = String(match.referee_player_id || '').trim() === actorId;
+  const isPlayer =
+    String(match.player_a_id || '').trim() === actorId ||
+    String(match.player_b_id || '').trim() === actorId;
+
+  return {
+    canOpen: isBlockCapturable && (isReferee || isPlayer),
+    canSubmitFinal: isBlockCapturable && (isReferee || isPlayer),
+    canSubmitClosingState: isBlockCapturable && (isReferee || isPlayer),
+    canViewOnly: false,
   };
 }
 
@@ -124,6 +143,7 @@ function submitMatchResultFromUi(payload) {
   const mode = String(data.mode || '').trim();
   const actorPlayerId = String(data.actorPlayerId || '').trim();
   const actorRole = String(data.actorRole || '').trim();
+  const match = getMatchById(matchId);
 
   if (!matchId) {
     throw new Error('matchId requerido');
@@ -132,6 +152,16 @@ function submitMatchResultFromUi(payload) {
   if (!mode) {
     throw new Error('mode requerido');
   }
+
+  if (!actorPlayerId) {
+    throw new Error('actorPlayerId requerido');
+  }
+
+  if (!match) {
+    throw new Error(`No existe el match_id=${matchId}`);
+  }
+
+  validateUiMatchSubmissionContext(match, actorPlayerId, actorRole, mode);
 
   if (mode === 'final') {
     const setsA = Number(data.setsA);
@@ -166,6 +196,43 @@ function submitMatchResultFromUi(payload) {
   }
 
   throw new Error(`mode no soportado: ${mode}`);
+}
+
+function validateUiMatchSubmissionContext(match, actorPlayerId, actorRole, mode) {
+  const block = getCurrentBlock();
+  const blockId = String(block && block.block_id || '').trim();
+  const blockStatus = String(block && block.status || '').trim();
+  const matchBlockId = String(match.block_id || '').trim();
+  const playerId = String(actorPlayerId || '').trim();
+  const role = String(actorRole || '').trim();
+  const isReferee = String(match.referee_player_id || '').trim() === playerId;
+  const isPlayer =
+    String(match.player_a_id || '').trim() === playerId ||
+    String(match.player_b_id || '').trim() === playerId;
+
+  if (!blockId || matchBlockId !== blockId) {
+    throw new Error('El partido no pertenece al bloque actual.');
+  }
+
+  if (blockStatus !== 'live' && blockStatus !== 'closing') {
+    throw new Error('La captura solo esta disponible cuando el bloque esta en juego o en cierre.');
+  }
+
+  if (!isReferee && !isPlayer) {
+    throw new Error('El jugador seleccionado no participa en este partido.');
+  }
+
+  if (mode !== 'final' && mode !== 'closing_state') {
+    throw new Error(`mode no soportado: ${mode}`);
+  }
+
+  if (role !== 'player' && role !== 'referee' && role !== 'admin') {
+    throw new Error(`Rol no soportado para captura: ${role}`);
+  }
+
+  if (role === 'referee' && !isReferee) {
+    throw new Error('Solo el arbitro asignado puede capturar con rol de arbitro.');
+  }
 }
 
 function mapMatchForPublicView(match) {

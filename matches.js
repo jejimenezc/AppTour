@@ -197,7 +197,7 @@ function submitMatchResult(matchId, payload) {
     }
 
     updateMatch(matchId, {
-      status: 'result_submitted',
+      status: 'live',
       result_mode: 'closing_state',
       sets_a: '',
       sets_b: '',
