@@ -153,6 +153,17 @@ function getTournamentClockTriggerStatus() {
 }
 
 /**
+ * Loguea el estado del trigger del reloj en formato legible.
+ *
+ * @returns {Object}
+ */
+function logTournamentClockTriggerStatus() {
+  const status = getTournamentClockTriggerStatus();
+  Logger.log(JSON.stringify(status, null, 2));
+  return status;
+}
+
+/**
  * Normaliza la frecuencia permitida para el trigger.
  *
  * @param {number=} intervalMinutes
