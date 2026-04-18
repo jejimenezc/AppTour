@@ -1,0 +1,21 @@
+# --- Google Apps Script / Clasp ---
+# Credenciales de inicio de sesión (¡NUNCA SUBIR!)
+.clasprc.json
+
+# Configuración del proyecto (contiene el Script ID)
+# Nota: Algunos prefieren subirlo, pero si el repo es público, 
+# es mejor ignorarlo para que nadie clone tu script directamente.
+.clasp.json
+
+# --- VS Code ---
+.vscode/
+*.code-workspace
+
+# --- Node / NPM ---
+node_modules/
+npm-debug.log*
+package-lock.json
+
+# --- OS Temporales ---
+.DS_Store
+Thumbs.db

@@ -1,0 +1,384 @@
+/**
+ * Abre la ventana de confirmación de grupos de singles.
+ * Genera propuesta inicial en proposed_group_id / proposed_group_slot.
+ */
+function openSinglesGroupConfirmationWindow() {
+  const players = getPlayers();
+
+  // limpiar propuesta previa
+  players.forEach(player => {
+    updatePlayer(player.player_id, {
+      proposed_group_id: '',
+      proposed_group_slot: '',
+    });
+  });
+
+  generateProposedSinglesGroups();
+  setConfigValue('tournament_status', 'awaiting_singles_group_confirmation', 'Ventana de confirmación de grupos abierta');
+}
+
+/**
+ * Genera propuesta inicial de grupos en proposed_group_id / proposed_group_slot.
+ * Usa jugadores vigentes del torneo.
+ *
+ * Regla:
+ * - checked_in = TRUE
+ * - agrupación de 3
+ */
+function generateProposedSinglesGroups() {
+  const players = getPlayersSortedBySeed().filter(player => toBoolean(player.checked_in));
+  validatePlayerCountForGroups(players);
+
+  const numGroups = players.length / 3;
+  const groupIds = generateGroupIds(numGroups);
+  const slots = ['A', 'B', 'C'];
+
+  for (let i = 0; i < players.length; i++) {
+    const groupIndex = Math.floor(i / 3);
+    const slotIndex = i % 3;
+
+    updatePlayer(players[i].player_id, {
+      proposed_group_id: groupIds[groupIndex],
+      proposed_group_slot: slots[slotIndex],
+    });
+  }
+}
+
+/**
+ * Recalcula desde cero la propuesta de grupos.
+ */
+function recalculateProposedSinglesGroups() {
+  const players = getPlayers();
+
+  players.forEach(player => {
+    updatePlayer(player.player_id, {
+      proposed_group_id: '',
+      proposed_group_slot: '',
+    });
+  });
+
+  generateProposedSinglesGroups();
+}
+
+/**
+ * Mueve un jugador a un grupo/slot propuesto.
+ *
+ * Regla ligera:
+ * - si el slot destino está ocupado, intercambia
+ * - no permite dejar duplicados
+ *
+ * @param {string} playerId
+ * @param {string} targetGroupId
+ * @param {string} targetSlot
+ */
+function movePlayerToProposedGroup(playerId, targetGroupId, targetSlot) {
+  const player = getPlayerOrThrow(playerId);
+  const slot = String(targetSlot || '').trim().toUpperCase();
+
+  if (!['A', 'B', 'C'].includes(slot)) {
+    throw new Error(`Slot propuesto inválido: ${targetSlot}`);
+  }
+
+  const currentPlayers = getPlayers();
+  const occupant = currentPlayers.find(p =>
+    String(p.proposed_group_id || '').trim() === String(targetGroupId) &&
+    String(p.proposed_group_slot || '').trim().toUpperCase() === slot
+  );
+
+  const playerCurrentGroup = String(player.proposed_group_id || '').trim();
+  const playerCurrentSlot = String(player.proposed_group_slot || '').trim().toUpperCase();
+
+  if (!playerCurrentGroup || !playerCurrentSlot) {
+    throw new Error(`El jugador ${playerId} no tiene propuesta de grupo actual.`);
+  }
+
+  if (occupant && String(occupant.player_id) !== String(playerId)) {
+    // intercambio
+    updatePlayer(occupant.player_id, {
+      proposed_group_id: playerCurrentGroup,
+      proposed_group_slot: playerCurrentSlot,
+    });
+  }
+
+  updatePlayer(playerId, {
+    proposed_group_id: targetGroupId,
+    proposed_group_slot: slot,
+  });
+}
+
+/**
+ * Valida consistencia del checkpoint de grupos.
+ *
+ * Reglas:
+ * - total de jugadores checked_in múltiplo de 3
+ * - todos tienen proposed_group_id / proposed_group_slot
+ * - sin duplicados por slot
+ * - cada grupo debe tener exactamente A, B, C
+ *
+ * @returns {{ok:boolean, errors:string[]}}
+ */
+function validateSinglesGroupCheckpoint() {
+  const errors = [];
+  const players = getPlayers().filter(p => toBoolean(p.checked_in));
+
+  if (players.length % 3 !== 0) {
+    errors.push(`La cantidad de jugadores activos (${players.length}) no es múltiplo de 3.`);
+  }
+
+  const seen = {};
+  const grouped = {};
+
+  players.forEach(player => {
+    const groupId = String(player.proposed_group_id || '').trim();
+    const slot = String(player.proposed_group_slot || '').trim().toUpperCase();
+
+    if (!groupId) {
+      errors.push(`El jugador ${player.player_id} no tiene proposed_group_id.`);
+      return;
+    }
+
+    if (!['A', 'B', 'C'].includes(slot)) {
+      errors.push(`El jugador ${player.player_id} no tiene proposed_group_slot válido.`);
+      return;
+    }
+
+    const key = `${groupId}::${slot}`;
+    if (seen[key]) {
+      errors.push(`Slot duplicado en ${groupId} ${slot}.`);
+    } else {
+      seen[key] = player.player_id;
+    }
+
+    if (!grouped[groupId]) grouped[groupId] = [];
+    grouped[groupId].push(slot);
+  });
+
+  Object.keys(grouped).forEach(groupId => {
+    const slots = grouped[groupId].slice().sort().join(',');
+    if (slots !== 'A,B,C') {
+      errors.push(`El grupo ${groupId} no tiene exactamente los slots A, B y C.`);
+    }
+  });
+
+  return {
+    ok: errors.length === 0,
+    errors,
+  };
+}
+
+/**
+ * Confirma los grupos propuestos y arranca la fase de grupos.
+ *
+ * Hace:
+ * - copiar proposed_group_id / proposed_group_slot a group_id / group_slot
+ * - reconstruir Groups
+ * - crear bloques iniciales de grupos
+ * - generar matches de grupos
+ * - set current_block_id
+ * - set status running_groups
+ */
+function confirmSinglesGroupsAndStartGroupStage() {
+  const validation = validateSinglesGroupCheckpoint();
+  if (!validation.ok) {
+    throw new Error(`No se puede confirmar grupos:\n- ${validation.errors.join('\n- ')}`);
+  }
+
+  const players = getPlayers().filter(p => toBoolean(p.checked_in));
+
+  // limpiar estructuras de groups previas, pero conservar dobles y singles anteriores
+  replaceAllRows('Groups', []);
+
+  // eliminar matches de groups anteriores si existieran
+  const nonGroupMatches = getMatches().filter(m => String(m.phase_type) !== 'groups');
+  replaceAllRows('Matches', nonGroupMatches);
+
+  // eliminar blocks de groups anteriores si existieran
+  const nonGroupBlocks = getBlocks().filter(b => String(b.phase_type) !== 'groups');
+  replaceAllRows('Blocks', nonGroupBlocks);
+
+  players.forEach(player => {
+    updatePlayer(player.player_id, {
+      group_id: player.proposed_group_id,
+      group_slot: player.proposed_group_slot,
+      group_rank: '',
+      singles_bracket: '',
+      singles_status: 'active',
+      current_role: 'idle',
+      current_block_id: '',
+    });
+  });
+
+  buildGroupsSheetFromPlayers();
+  createInitialGroupBlocksAfterExistingBlocks();
+  generateGroupStageMatchesAfterExistingMatches();
+
+  const firstGroupBlock = getBlocks()
+    .filter(b => String(b.phase_type) === 'groups')
+    .sort((a, b) => Number(a.block_id) - Number(b.block_id))[0];
+
+  if (firstGroupBlock) {
+    setConfigValue('current_block_id', firstGroupBlock.block_id, 'Bloque actual');
+  }
+
+  setConfigValue('tournament_status', 'running_groups', 'Fase de grupos en curso');
+}
+
+/**
+ * Crea los 3 bloques iniciales de grupos, continuando desde el último bloque existente.
+ */
+function createInitialGroupBlocksAfterExistingBlocks() {
+  const existingBlocks = getBlocksSorted();
+  const maxBlockId = existingBlocks.reduce((acc, b) => Math.max(acc, Number(b.block_id || 0)), 0);
+  const lastBlock = existingBlocks.length ? existingBlocks[existingBlocks.length - 1] : null;
+  const startBase = lastBlock ? parseBlockDate(lastBlock.end_ts) : getTournamentStartDate();
+
+  for (let i = 0; i < 3; i++) {
+    const start = addMinutes(startBase, i * 20);
+    const closeSignal = addMinutes(start, 15);
+    const hardClose = addMinutes(start, 18);
+    const end = addMinutes(start, 20);
+
+    createBlock({
+      block_id: maxBlockId + i + 1,
+      phase_type: 'groups',
+      phase_label: `Grupos R${i + 1}`,
+      start_ts: start,
+      close_signal_ts: closeSignal,
+      hard_close_ts: hardClose,
+      end_ts: end,
+      status: 'scheduled',
+      published_at: '',
+      closed_at: '',
+      advance_done: false,
+      notes: '',
+    });
+  }
+}
+
+/**
+ * Genera matches de groups, continuando correlativo desde los matches existentes.
+ */
+function generateGroupStageMatchesAfterExistingMatches() {
+  const players = getPlayers().filter(p => String(p.group_id || '').trim() !== '');
+
+  const grouped = {};
+  players.forEach(player => {
+    const groupId = String(player.group_id);
+    if (!grouped[groupId]) grouped[groupId] = {};
+    grouped[groupId][String(player.group_slot)] = player;
+  });
+
+  const groupBlocks = getBlocks()
+    .filter(b => String(b.phase_type) === 'groups')
+    .sort((a, b) => Number(a.block_id) - Number(b.block_id));
+
+  if (groupBlocks.length < 3) {
+    throw new Error('No existen los 3 bloques de groups requeridos.');
+  }
+
+  let matchCounter = getNextMatchCounter(getMatches());
+
+  Object.keys(grouped).sort().forEach(groupId => {
+    const g = grouped[groupId];
+    const A = g['A'];
+    const B = g['B'];
+    const C = g['C'];
+
+    if (!A || !B || !C) {
+      throw new Error(`El grupo ${groupId} no tiene slots completos A/B/C`);
+    }
+
+    const template = [
+      {
+        round_no: 1,
+        block_id: groupBlocks[0].block_id,
+        player_a_id: A.player_id,
+        player_b_id: B.player_id,
+        referee_player_id: C.player_id,
+        slot_code: `${groupId}-R1`,
+      },
+      {
+        round_no: 2,
+        block_id: groupBlocks[1].block_id,
+        player_a_id: B.player_id,
+        player_b_id: C.player_id,
+        referee_player_id: A.player_id,
+        slot_code: `${groupId}-R2`,
+      },
+      {
+        round_no: 3,
+        block_id: groupBlocks[2].block_id,
+        player_a_id: A.player_id,
+        player_b_id: C.player_id,
+        referee_player_id: B.player_id,
+        slot_code: `${groupId}-R3`,
+      },
+    ];
+
+    template.forEach(item => {
+      appendRow('Matches', {
+        match_id: `M${String(matchCounter).padStart(4, '0')}`,
+        block_id: item.block_id,
+        phase_type: 'groups',
+        stage: 'group_match',
+        round_no: item.round_no,
+        table_no: '',
+        match_order: '',
+        group_id: groupId,
+        bracket_type: '',
+        slot_code: item.slot_code,
+        player_a_id: item.player_a_id,
+        player_b_id: item.player_b_id,
+        referee_player_id: item.referee_player_id,
+        status: 'scheduled',
+        result_mode: '',
+        sets_a: '',
+        sets_b: '',
+        closing_state: '',
+        closing_state_resolved_from: '',
+        winner_id: '',
+        loser_id: '',
+        result_source: '',
+        submitted_by: '',
+        submitted_at: '',
+        auto_closed: false,
+        needs_review: false,
+        admin_note: '',
+      });
+
+      matchCounter++;
+    });
+  });
+
+  assignTablesAndMatchOrderForAllGroupMatches();
+}
+
+/**
+ * Asigna mesas/orden a todos los matches de groups existentes.
+ */
+function assignTablesAndMatchOrderForAllGroupMatches() {
+  const maxTables = Number(getConfigValue('max_tables') || 12);
+  const groupMatches = getMatches().filter(m => String(m.phase_type) === 'groups');
+
+  const byBlock = {};
+  groupMatches.forEach(match => {
+    const blockId = String(match.block_id);
+    if (!byBlock[blockId]) byBlock[blockId] = [];
+    byBlock[blockId].push(match);
+  });
+
+  Object.keys(byBlock).forEach(blockId => {
+    const rows = byBlock[blockId].sort((a, b) => String(a.group_id).localeCompare(String(b.group_id)));
+
+    if (rows.length > maxTables) {
+      throw new Error(`El bloque ${blockId} tiene ${rows.length} partidos y excede max_tables=${maxTables}`);
+    }
+
+    rows.forEach((match, idx) => {
+      updateMatch(match.match_id, {
+        table_no: idx + 1,
+        match_order: idx + 1,
+      });
+    });
+  });
+}

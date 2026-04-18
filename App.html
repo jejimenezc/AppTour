@@ -1,0 +1,80 @@
+<div class="page">
+  <div class="stack">
+    <section class="card">
+      <div class="header-row">
+        <div>
+          <p class="subtitle">Torneo tenis de mesa</p>
+          <h1 class="title">Pantalla pública</h1>
+          <p class="helper">
+            Vista operativa del bloque actual, mesas activas y partidos en curso.
+          </p>
+        </div>
+
+        <div class="grid-stats" id="top-stats">
+          <div class="stat">
+            <div class="stat-label">Estado</div>
+            <div class="stat-value" id="stat-status">—</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Bloque</div>
+            <div class="stat-value" id="stat-block">—</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Fase</div>
+            <div class="stat-value" id="stat-phase">—</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Actualizado</div>
+            <div class="stat-value" id="stat-updated">—</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="row-between" style="margin-bottom: 12px;">
+        <h2 class="section-title" style="margin: 0;">Ahora</h2>
+        <div id="refresh-indicator" class="helper">Actualización automática activada</div>
+      </div>
+
+      <div id="public-screen-content">
+        <div class="loading">Cargando partidos del bloque actual...</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="row-between" style="margin-bottom: 12px; align-items: flex-end;">
+        <div>
+          <h2 class="section-title" style="margin: 0;">Mi jornada</h2>
+          <p class="helper" style="margin-top: 6px;">Consulta tu rol actual, compromiso del bloque y acceso rápido a captura.</p>
+        </div>
+      </div>
+
+      <div class="card-soft" style="margin-bottom: 12px;">
+        <div class="row-between" style="align-items: end; gap: 12px; flex-wrap: wrap;">
+          <div style="flex: 1; min-width: 220px;">
+            <div class="stat-label" style="margin-bottom: 6px;">Selecciona tu nombre</div>
+
+            <select
+              id="my-player-select"
+              style="width: 100%; padding: 10px 12px; border-radius: 12px; border: 1px solid #cbd5e1; font-size: 14px;"
+            >
+              <option value="">Cargando jugadores...</option>
+            </select>
+          </div>
+
+          <button
+            onclick="loadMyDayFromSelect()"
+            style="padding: 10px 16px; border-radius: 12px; border: 0; background: #0f172a; color: white; font-weight: bold; cursor: pointer;"
+          >
+            Ver mi jornada
+          </button>
+        </div>
+      </div>
+
+      <div id="myday-content">
+        <div class="empty">Ingresa un player_id para ver tu jornada.</div>
+      </div>
+    </section>
+  </div>
+</div>

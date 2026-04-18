@@ -1,0 +1,618 @@
+<script>
+  const PUBLIC_REFRESH_MS = 10000;
+  const LOCAL_STORAGE_PLAYER_KEY = 'ttm_selected_player_id';
+
+  let publicRefreshTimer = null;
+  let publicLoadInFlight = false;
+  let publicLastSuccessAt = null;
+  let currentMyDayVm = null;
+
+  document.addEventListener('DOMContentLoaded', function () {
+    loadPublicScreen();
+    startPublicAutoRefresh();
+    loadPlayerSelector();
+  });
+
+  function startPublicAutoRefresh() {
+    stopPublicAutoRefresh();
+
+    publicRefreshTimer = window.setInterval(function () {
+      loadPublicScreen({ silent: true });
+    }, PUBLIC_REFRESH_MS);
+
+    setRefreshIndicator('Actualización automática activada');
+  }
+
+  function stopPublicAutoRefresh() {
+    if (publicRefreshTimer) {
+      window.clearInterval(publicRefreshTimer);
+      publicRefreshTimer = null;
+    }
+  }
+
+  function loadPublicScreen(options) {
+    const opts = options || {};
+    const silent = !!opts.silent;
+
+    if (publicLoadInFlight) return;
+
+    publicLoadInFlight = true;
+    setRefreshIndicator(silent ? 'Actualizando...' : 'Cargando datos...');
+
+    google.script.run
+      .withSuccessHandler(function (vm) {
+        publicLoadInFlight = false;
+        publicLastSuccessAt = new Date();
+        renderPublicScreen(vm);
+        setRefreshIndicator(buildRefreshIndicatorText());
+      })
+      .withFailureHandler(function (error) {
+        publicLoadInFlight = false;
+        renderPublicScreenError(error);
+        setRefreshIndicator('Error al actualizar');
+      })
+      .getPublicViewModel();
+  }
+
+  function renderPublicScreen(vm) {
+    renderTopStats(vm);
+    renderPublicMatches(vm);
+  }
+
+  function renderTopStats(vm) {
+    document.getElementById('stat-status').textContent = vm.tournamentStatus || '—';
+    document.getElementById('stat-block').textContent = vm.currentBlock ? vm.currentBlock.id : '—';
+    document.getElementById('stat-phase').textContent = vm.currentBlock ? vm.currentBlock.phaseLabel : '—';
+    document.getElementById('stat-updated').textContent = vm.generatedAt || '—';
+  }
+
+  function renderPublicMatches(vm) {
+    const root = document.getElementById('public-screen-content');
+
+    if (!vm.currentBlock) {
+      root.innerHTML = '<div class="empty">No hay bloque activo en este momento.</div>';
+      return;
+    }
+
+    if (!vm.matches || vm.matches.length === 0) {
+      root.innerHTML = '<div class="empty">El bloque actual no tiene partidos visibles.</div>';
+      return;
+    }
+
+    const html = vm.matches.map(function (match) {
+      return `
+        <article class="match-item">
+          <div class="row-between">
+            <div>
+              <span class="badge">Mesa ${escapeHtml(match.tableNo || '—')}</span>
+              <span class="helper" style="margin-left:8px;">${escapeHtml(match.phaseLabel || 'Partido')}</span>
+            </div>
+            ${renderStatusPill(match.status)}
+          </div>
+
+          <div style="margin-top:12px;">
+            <div style="font-size:18px; font-weight:bold;">
+              ${escapeHtml(match.leftLabel || '—')} vs ${escapeHtml(match.rightLabel || '—')}
+            </div>
+            ${match.refereeLabel ? `<div class="helper">${escapeHtml(match.refereeLabel)}</div>` : ''}
+          </div>
+        </article>
+      `;
+    }).join('');
+
+    root.innerHTML = `<div class="match-list">${html}</div>`;
+  }
+
+  function renderStatusPill(status) {
+    const value = String(status || '');
+    let cls = 'status-closed';
+
+    if (value === 'En juego') cls = 'status-live';
+    else if (value === 'Pendiente') cls = 'status-pending';
+    else if (value === 'Resultado ingresado') cls = 'status-done';
+
+    return `<span class="status-pill ${cls}">${escapeHtml(value || '—')}</span>`;
+  }
+
+  function renderPublicScreenError(error) {
+    const root = document.getElementById('public-screen-content');
+    const message = error && error.message ? error.message : String(error || 'Error desconocido');
+    root.innerHTML = `<div class="error">No se pudo cargar la pantalla pública: ${escapeHtml(message)}</div>`;
+  }
+
+  function setRefreshIndicator(text) {
+    const el = document.getElementById('refresh-indicator');
+    if (!el) return;
+    el.textContent = text;
+  }
+
+  function buildRefreshIndicatorText() {
+    if (!publicLastSuccessAt) {
+      return 'Actualización automática activada';
+    }
+
+    const hh = String(publicLastSuccessAt.getHours()).padStart(2, '0');
+    const mm = String(publicLastSuccessAt.getMinutes()).padStart(2, '0');
+    const ss = String(publicLastSuccessAt.getSeconds()).padStart(2, '0');
+
+    return `Actualización automática · última carga ${hh}:${mm}:${ss}`;
+  }
+
+  function loadPlayerSelector() {
+    google.script.run
+      .withSuccessHandler(renderPlayerSelector)
+      .withFailureHandler(function (err) {
+        console.error(err);
+      })
+      .getCheckedInPlayersForSelector();
+  }
+
+  function renderPlayerSelector(players) {
+    const select = document.getElementById('my-player-select');
+    if (!select) return;
+
+    if (!players || players.length === 0) {
+      select.innerHTML = '<option value="">No hay jugadores disponibles</option>';
+      return;
+    }
+
+    const savedPlayerId = getSavedPlayerId();
+
+    const options = players.map(p => {
+      const selected = savedPlayerId === p.id ? ' selected' : '';
+      return `<option value="${escapeHtml(p.id)}"${selected}>${escapeHtml(p.name)} · ${escapeHtml(p.id)}</option>`;
+    });
+
+    select.innerHTML =
+      '<option value="">Selecciona tu nombre</option>' +
+      options.join('');
+
+    if (savedPlayerId && players.some(p => p.id === savedPlayerId)) {
+      loadMyDayFromSelect(true);
+    }
+  }
+
+  function loadMyDayFromSelect(isAutoLoad) {
+    const select = document.getElementById('my-player-select');
+    const playerId = select.value;
+
+    if (!playerId) {
+      if (!isAutoLoad) {
+        alert('Selecciona tu nombre');
+      }
+      return;
+    }
+
+    savePlayerId(playerId);
+
+    const root = document.getElementById('myday-content');
+    root.innerHTML = '<div class="loading">Cargando jornada...</div>';
+
+    google.script.run
+      .withSuccessHandler(renderMyDay)
+      .withFailureHandler(renderMyDayError)
+      .getMyDayViewModel(playerId);
+  }
+
+  function renderMyDay(vm) {
+    currentMyDayVm = vm;
+
+    const root = document.getElementById('myday-content');
+
+    const playerRoleUi = getMyDayPlayerRoleUi(vm);
+    const matchRoleUi = getMyDayMatchRoleUi(vm);
+    const nextCommitment = buildMyDayCommitmentLabel(vm);
+    const cta = buildMyDayCta(vm);
+
+    let playerBadgeHtml = '';
+    if (playerRoleUi.show) {
+      playerBadgeHtml = `<span class="status-pill ${playerRoleUi.className}">${escapeHtml(playerRoleUi.label)}</span>`;
+    }
+
+    let matchCardHtml = `
+      <div class="card-soft">
+        <div class="stat-label">Compromiso del bloque</div>
+        <div class="stat-value" style="font-size: 18px; margin-top: 8px;">${escapeHtml(nextCommitment.title)}</div>
+        <div class="helper" style="margin-top: 6px;">${escapeHtml(nextCommitment.detail)}</div>
+      </div>
+    `;
+
+    if (vm.currentMatch) {
+      let matchBadgeHtml = '';
+      if (matchRoleUi.show) {
+        matchBadgeHtml = `<span class="status-pill ${matchRoleUi.className}">${escapeHtml(matchRoleUi.label)}</span>`;
+      }
+
+      matchCardHtml = `
+        <div class="card-soft">
+          <div class="row-between">
+            <div>
+              <span class="badge">Mesa ${escapeHtml(vm.currentMatch.tableNo)}</span>
+              <span class="helper" style="margin-left:8px;">${escapeHtml(vm.currentMatch.phaseLabel)}</span>
+            </div>
+            ${matchBadgeHtml}
+          </div>
+
+          <div style="margin-top: 12px;">
+            <div class="stat-label">Compromiso del bloque</div>
+            <div class="stat-value" style="font-size: 18px; margin-top: 8px;">
+              ${escapeHtml(vm.currentMatch.leftLabel)} vs ${escapeHtml(vm.currentMatch.rightLabel)}
+            </div>
+            <div class="helper" style="margin-top: 6px;">${escapeHtml(nextCommitment.detail)}</div>
+          </div>
+
+          <div style="margin-top: 14px;">
+            <button
+              onclick="openMatchCapture()"
+              ${cta.disabled ? 'disabled' : ''}
+              style="
+                width: 100%;
+                padding: 10px 14px;
+                border-radius: 12px;
+                border: 0;
+                font-weight: bold;
+                cursor: ${cta.disabled ? 'default' : 'pointer'};
+                background: ${cta.disabled ? '#cbd5e1' : '#0f172a'};
+                color: ${cta.disabled ? '#475569' : '#ffffff'};
+              "
+            >
+              ${escapeHtml(cta.label)}
+            </button>
+          </div>
+        </div>
+      `;
+    }
+
+    root.innerHTML = `
+      <div class="stack">
+        <div class="card-soft">
+          <div class="row-between">
+            <div>
+              <div class="stat-label">Bloque actual</div>
+              <div class="stat-value" style="font-size: 20px;">
+                ${vm.currentBlock ? `Bloque ${escapeHtml(vm.currentBlock.id)}` : 'Sin bloque activo'}
+              </div>
+              <div class="helper" style="margin-top: 6px;">
+                ${vm.currentBlock ? escapeHtml(vm.currentBlock.phaseLabel || '') : 'No hay fase en curso'}
+              </div>
+            </div>
+            <span class="status-pill status-done">${escapeHtml(formatTournamentStateLabel(vm.currentBlock))}</span>
+          </div>
+        </div>
+
+        <div class="card-soft">
+          <div class="row-between">
+            <div>
+              <div class="stat-label">Jugador</div>
+              <div class="stat-value">${escapeHtml(vm.player.name)}</div>
+              <div class="helper" style="margin-top: 6px;">ID ${escapeHtml(vm.player.id)}</div>
+            </div>
+            ${playerBadgeHtml}
+          </div>
+        </div>
+
+        ${matchCardHtml}
+      </div>
+    `;
+  }
+
+  function getMyDayPlayerRoleUi(vm) {
+    const hasCurrentMatch = !!vm.currentMatch;
+    const isReferee = hasCurrentMatch && !!vm.currentMatch.isReferee;
+    const isPlaying = hasCurrentMatch && (!!vm.currentMatch.isPlayerA || !!vm.currentMatch.isPlayerB);
+
+    if (isReferee || isPlaying) {
+      return { show: false, label: '', className: '' };
+    }
+
+    return {
+      show: true,
+      label: 'Sin turno',
+      className: 'status-closed',
+    };
+  }
+
+  function getMyDayMatchRoleUi(vm) {
+    const hasCurrentMatch = !!vm.currentMatch;
+    if (!hasCurrentMatch) {
+      return { show: false, label: '', className: '' };
+    }
+
+    const isFinished = isMyDayMatchFinished(vm.currentMatch);
+
+    if (isFinished) {
+      return {
+        show: true,
+        label: 'Finalizado',
+        className: 'status-done',
+      };
+    }
+
+    if (vm.currentMatch.isReferee) {
+      return {
+        show: true,
+        label: 'Eres árbitro en este partido',
+        className: 'status-live',
+      };
+    }
+
+    if (vm.currentMatch.isPlayerA || vm.currentMatch.isPlayerB) {
+      return {
+        show: true,
+        label: 'Juega ahora',
+        className: 'status-live',
+      };
+    }
+
+    return { show: false, label: '', className: '' };
+  }
+
+  function isMyDayMatchFinished(match) {
+    const status = String(match.matchStatus || '').trim();
+    const resultMode = String(match.resultMode || '').trim();
+
+    return (
+      status === 'result_submitted' &&
+      (resultMode === 'final' || resultMode === 'closing_state')
+    ) || status === 'auto_closed';
+  }
+
+  function buildMyDayCommitmentLabel(vm) {
+    if (!vm.currentBlock) {
+      return {
+        title: 'Sin bloque activo',
+        detail: 'No hay actividad programada en este momento.',
+      };
+    }
+
+    if (vm.currentMatch && isMyDayMatchFinished(vm.currentMatch)) {
+      return {
+        title: 'Partido finalizado en este bloque',
+        detail: `Bloque ${vm.currentBlock.id} · ${vm.currentBlock.phaseLabel}`,
+      };
+    }
+
+    if (vm.currentMatch && vm.currentMatch.isReferee) {
+      return {
+        title: 'Arbitraje asignado ahora',
+        detail: `Bloque ${vm.currentBlock.id} · ${vm.currentBlock.phaseLabel}`,
+      };
+    }
+
+    if (vm.currentMatch && (vm.currentMatch.isPlayerA || vm.currentMatch.isPlayerB)) {
+      return {
+        title: 'Partido asignado ahora',
+        detail: `Bloque ${vm.currentBlock.id} · ${vm.currentBlock.phaseLabel}`,
+      };
+    }
+
+    return {
+      title: 'Sin compromiso en este bloque',
+      detail: `Bloque ${vm.currentBlock.id} · ${vm.currentBlock.phaseLabel}`,
+    };
+  }
+
+  function buildMyDayCta(vm) {
+    if (!vm.currentMatch) {
+      return {
+        label: 'Sin acción disponible en este bloque',
+        disabled: true,
+      };
+    }
+
+    if (isMyDayMatchFinished(vm.currentMatch)) {
+      return {
+        label: 'Partido ya finalizado',
+        disabled: true,
+      };
+    }
+
+    if (vm.currentMatch.isReferee) {
+      return {
+        label: 'Ir a captura de resultados',
+        disabled: false,
+      };
+    }
+
+    if (vm.currentMatch.isPlayerA || vm.currentMatch.isPlayerB) {
+      return {
+        label: 'Ver captura del partido',
+        disabled: false,
+      };
+    }
+
+    return {
+      label: 'Sin acción disponible en este bloque',
+      disabled: true,
+    };
+  }
+
+  function formatTournamentStateLabel(currentBlock) {
+    if (!currentBlock) return 'Sin actividad';
+    const status = String(currentBlock.status || '');
+
+    if (status === 'live') return 'En curso';
+    if (status === 'scheduled') return 'Programado';
+    if (status === 'closing') return 'Cierre';
+    if (status === 'transition') return 'Transición';
+    if (status === 'closed') return 'Cerrado';
+
+    return status || 'Bloque';
+  }
+
+  function openMatchCapture() {
+    if (!currentMyDayVm || !currentMyDayVm.currentMatch) return;
+    if (isMyDayMatchFinished(currentMyDayVm.currentMatch)) return;
+
+    const m = currentMyDayVm.currentMatch;
+
+    const html = `
+      <div id="capture-modal-overlay" style="
+        position: fixed;
+        inset: 0;
+        background: rgba(15,23,42,0.6);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+        padding: 16px;
+      ">
+        <div style="
+          background: white;
+          border-radius: 16px;
+          padding: 20px;
+          width: 100%;
+          max-width: 480px;
+          max-height: 90vh;
+          overflow: auto;
+        ">
+          <div style="font-weight:bold; margin-bottom:8px; font-size:18px;">
+            Captura de resultado
+          </div>
+
+          <div style="margin-bottom:12px; font-weight:bold;">
+            ${escapeHtml(m.leftLabel)} vs ${escapeHtml(m.rightLabel)}
+          </div>
+
+          <div class="helper" style="margin-bottom: 16px;">
+            Mesa ${escapeHtml(m.tableNo)} · ${escapeHtml(m.phaseLabel)}
+          </div>
+
+          <div class="card-soft" style="margin-bottom: 14px;">
+            <div class="stat-label" style="margin-bottom: 10px;">Resultado final</div>
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+              <button onclick="submitMatchCaptureFinal(2,0)" style="${captureButtonStyle()}">2–0</button>
+              <button onclick="submitMatchCaptureFinal(2,1)" style="${captureButtonStyle()}">2–1</button>
+              <button onclick="submitMatchCaptureFinal(0,2)" style="${captureButtonStyle()}">0–2</button>
+              <button onclick="submitMatchCaptureFinal(1,2)" style="${captureButtonStyle()}">1–2</button>
+            </div>
+          </div>
+
+          <div class="card-soft">
+            <div class="stat-label" style="margin-bottom: 10px;">Estado de cierre</div>
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+              <button onclick="submitMatchCaptureClosingState('A_1_0')" style="${captureButtonStyle(true)}">A lidera 1–0</button>
+              <button onclick="submitMatchCaptureClosingState('B_1_0')" style="${captureButtonStyle(true)}">B lidera 1–0</button>
+              <button onclick="submitMatchCaptureClosingState('ONE_ONE')" style="${captureButtonStyle(true)}">Van 1–1</button>
+              <button onclick="submitMatchCaptureClosingState('NOT_STARTED')" style="${captureButtonStyle(true)}">No iniciado</button>
+            </div>
+          </div>
+
+          <div style="margin-top:16px;" class="row-between">
+            <button onclick="closeMatchCapture()" style="padding:8px 12px; border-radius:10px; border:1px solid #cbd5e1; background:white; cursor:pointer;">
+              Cancelar
+            </button>
+
+            <div class="helper">Usa opciones estándar para minimizar errores</div>
+          </div>
+
+          <div id="capture-error" class="error" style="display:none; margin-top:12px;"></div>
+        </div>
+      </div>
+    `;
+
+    document.body.insertAdjacentHTML('beforeend', html);
+  }
+
+  function captureButtonStyle(isSecondary) {
+    return [
+      'width:100%',
+      'padding:10px 12px',
+      'border-radius:12px',
+      'border:1px solid #cbd5e1',
+      'background:' + (isSecondary ? '#f8fafc' : '#0f172a'),
+      'color:' + (isSecondary ? '#0f172a' : '#ffffff'),
+      'font-weight:bold',
+      'cursor:pointer'
+    ].join(';');
+  }
+
+  function closeMatchCapture() {
+    const el = document.getElementById('capture-modal-overlay');
+    if (el) el.remove();
+  }
+
+  function submitMatchCaptureFinal(setsA, setsB) {
+    submitCapturePayload({
+      mode: 'final',
+      setsA: setsA,
+      setsB: setsB,
+    });
+  }
+
+  function submitMatchCaptureClosingState(closingState) {
+    submitCapturePayload({
+      mode: 'closing_state',
+      closingState: closingState,
+    });
+  }
+
+  function submitCapturePayload(payload) {
+    const errorBox = document.getElementById('capture-error');
+    if (errorBox) {
+      errorBox.style.display = 'none';
+      errorBox.textContent = '';
+    }
+
+    const m = currentMyDayVm.currentMatch;
+    const playerId = currentMyDayVm.player.id;
+    const actorRole = resolveUiActorRole(currentMyDayVm);
+
+    google.script.run
+      .withSuccessHandler(function () {
+        closeMatchCapture();
+        loadMyDayFromSelect(true);
+        loadPublicScreen({ silent: true });
+      })
+      .withFailureHandler(function (err) {
+        if (!errorBox) return;
+        errorBox.style.display = 'block';
+        errorBox.textContent = err.message || String(err);
+      })
+      .submitMatchResultFromUi({
+        matchId: m.matchId,
+        mode: payload.mode,
+        setsA: payload.setsA,
+        setsB: payload.setsB,
+        closingState: payload.closingState,
+        actorPlayerId: playerId,
+        actorRole: actorRole
+      });
+  }
+
+  function resolveUiActorRole(vm) {
+    if (!vm || !vm.currentMatch) return 'player';
+    if (vm.currentMatch.isReferee) return 'referee';
+    return 'player';
+  }
+
+  function renderMyDayError(error) {
+    document.getElementById('myday-content').innerHTML =
+      '<div class="error">' + escapeHtml(error.message || String(error)) + '</div>';
+  }
+
+  function savePlayerId(playerId) {
+    try {
+      localStorage.setItem(LOCAL_STORAGE_PLAYER_KEY, String(playerId || ''));
+    } catch (e) {
+      console.warn('No se pudo guardar player_id en localStorage', e);
+    }
+  }
+
+  function getSavedPlayerId() {
+    try {
+      return localStorage.getItem(LOCAL_STORAGE_PLAYER_KEY) || '';
+    } catch (e) {
+      return '';
+    }
+  }
+
+  function escapeHtml(value) {
+    return String(value == null ? '' : value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+</script>
