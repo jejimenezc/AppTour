@@ -51,6 +51,140 @@ function tickTournamentClock() {
   Logger.log(`Sin cambios para bloque ${currentBlock.block_id}. Estado actual: ${status}`);
 }
 
+const CLOCK_TRIGGER_HANDLER = 'runTournamentClockTick';
+const CLOCK_TRIGGER_ALLOWED_MINUTES = [1, 5, 10, 15, 30];
+const CLOCK_TRIGGER_DEFAULT_MINUTES = 1;
+
+/**
+ * Wrapper del reloj para ejecucion automatica.
+ * Aplica lock para evitar solapamientos y solo corre si el trigger esta habilitado.
+ */
+function runTournamentClockTick() {
+  if (!toBoolean(getConfigValue('clock_trigger_enabled'))) {
+    Logger.log('Clock trigger omitido: clock_trigger_enabled=false');
+    return;
+  }
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(1000)) {
+    Logger.log('Clock trigger omitido: existe otra ejecucion en curso.');
+    return;
+  }
+
+  try {
+    tickTournamentClock();
+    setConfigValue('clock_trigger_last_run_at', nowIso(), 'Ultima ejecucion automatica del reloj');
+    setConfigValue('clock_trigger_last_error', '', 'Ultimo error del reloj');
+  } catch (error) {
+    const message = error && error.message ? error.message : String(error);
+    setConfigValue('clock_trigger_last_error', message, 'Ultimo error del reloj');
+    throw error;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Instala un trigger time-driven para el reloj del torneo.
+ * Elimina triggers previos del mismo handler para evitar duplicados.
+ *
+ * @param {number=} intervalMinutes
+ * @returns {Object}
+ */
+function installTournamentClockTrigger(intervalMinutes) {
+  const minutes = normalizeClockTriggerInterval(intervalMinutes);
+
+  removeProjectTriggersByHandler_(CLOCK_TRIGGER_HANDLER);
+
+  ScriptApp.newTrigger(CLOCK_TRIGGER_HANDLER)
+    .timeBased()
+    .everyMinutes(minutes)
+    .create();
+
+  setConfigValue('clock_trigger_enabled', true, 'Habilita el trigger automatico del reloj');
+  setConfigValue('clock_trigger_interval_minutes', minutes, 'Frecuencia del trigger automatico del reloj');
+  setConfigValue('clock_trigger_installed_at', nowIso(), 'Instalacion del trigger automatico del reloj');
+
+  return getTournamentClockTriggerStatus();
+}
+
+/**
+ * Remueve todos los triggers del reloj y deshabilita su ejecucion automatica.
+ *
+ * @returns {Object}
+ */
+function removeTournamentClockTriggers() {
+  const removedCount = removeProjectTriggersByHandler_(CLOCK_TRIGGER_HANDLER);
+
+  setConfigValue('clock_trigger_enabled', false, 'Habilita el trigger automatico del reloj');
+  setConfigValue('clock_trigger_removed_at', nowIso(), 'Ultima remocion del trigger automatico del reloj');
+
+  const status = getTournamentClockTriggerStatus();
+  status.removedCount = removedCount;
+  return status;
+}
+
+/**
+ * Devuelve el estado del trigger del reloj para auditoria rapida.
+ *
+ * @returns {Object}
+ */
+function getTournamentClockTriggerStatus() {
+  const triggers = ScriptApp.getProjectTriggers()
+    .filter(trigger => trigger.getHandlerFunction() === CLOCK_TRIGGER_HANDLER)
+    .map(trigger => ({
+      handler: trigger.getHandlerFunction(),
+      eventType: String(trigger.getEventType()),
+      triggerSource: String(trigger.getTriggerSource()),
+      uniqueId: typeof trigger.getUniqueId === 'function' ? trigger.getUniqueId() : '',
+    }));
+
+  return {
+    handler: CLOCK_TRIGGER_HANDLER,
+    enabled: toBoolean(getConfigValue('clock_trigger_enabled')),
+    configuredIntervalMinutes: Number(getConfigValue('clock_trigger_interval_minutes') || ''),
+    installedAt: getConfigValue('clock_trigger_installed_at') || '',
+    removedAt: getConfigValue('clock_trigger_removed_at') || '',
+    lastRunAt: getConfigValue('clock_trigger_last_run_at') || '',
+    lastError: getConfigValue('clock_trigger_last_error') || '',
+    triggerCount: triggers.length,
+    triggers: triggers,
+  };
+}
+
+/**
+ * Normaliza la frecuencia permitida para el trigger.
+ *
+ * @param {number=} intervalMinutes
+ * @returns {number}
+ */
+function normalizeClockTriggerInterval(intervalMinutes) {
+  const raw = typeof intervalMinutes === 'undefined' || intervalMinutes === null || intervalMinutes === ''
+    ? getConfigValue('clock_trigger_interval_minutes')
+    : intervalMinutes;
+  const minutes = Number(raw || CLOCK_TRIGGER_DEFAULT_MINUTES);
+
+  if (!CLOCK_TRIGGER_ALLOWED_MINUTES.includes(minutes)) {
+    throw new Error(`clock trigger interval invalido: ${raw}. Usa uno de: ${CLOCK_TRIGGER_ALLOWED_MINUTES.join(', ')}`);
+  }
+
+  return minutes;
+}
+
+/**
+ * Elimina triggers del proyecto por nombre de handler.
+ *
+ * @param {string} handlerName
+ * @returns {number}
+ */
+function removeProjectTriggersByHandler_(handlerName) {
+  const triggers = ScriptApp.getProjectTriggers()
+    .filter(trigger => trigger.getHandlerFunction() === handlerName);
+
+  triggers.forEach(trigger => ScriptApp.deleteTrigger(trigger));
+  return triggers.length;
+}
+
 /**
  * Inicia un bloque.
  * @param {string|number} blockId
