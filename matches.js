@@ -114,6 +114,130 @@ function resolveWinnerLoserFromSets(match, setsA, setsB) {
 }
 
 /**
+ * Devuelve true si un resultado final es compatible con un closing_state previo.
+ *
+ * @param {string} closingState
+ * @param {number} setsA
+ * @param {number} setsB
+ * @returns {boolean}
+ */
+function isFinalCompatibleWithClosingState(closingState, setsA, setsB) {
+  const state = String(closingState || '').trim();
+  const a = Number(setsA);
+  const b = Number(setsB);
+
+  if (state === 'NOT_STARTED' || !state) {
+    return true;
+  }
+
+  if (state === 'A_1_0') {
+    return (a === 2 && b === 0) || (a === 2 && b === 1) || (a === 1 && b === 2);
+  }
+
+  if (state === 'B_1_0') {
+    return (a === 0 && b === 2) || (a === 1 && b === 2) || (a === 2 && b === 1);
+  }
+
+  if (state === 'ONE_ONE') {
+    return (a === 2 && b === 1) || (a === 1 && b === 2);
+  }
+
+  return false;
+}
+
+/**
+ * Devuelve true si un closing_state nuevo es consistente con el anterior.
+ *
+ * Regla de progresion:
+ * - NOT_STARTED -> cualquier parcial
+ * - A_1_0 -> A_1_0 o ONE_ONE
+ * - B_1_0 -> B_1_0 o ONE_ONE
+ * - ONE_ONE -> solo ONE_ONE
+ *
+ * @param {string} previousState
+ * @param {string} nextState
+ * @returns {boolean}
+ */
+function isClosingStateCompatibleWithPrevious(previousState, nextState) {
+  const prev = String(previousState || '').trim();
+  const next = String(nextState || '').trim();
+
+  if (!prev || prev === 'NOT_STARTED') {
+    return ['NOT_STARTED', 'A_1_0', 'B_1_0', 'ONE_ONE'].includes(next);
+  }
+
+  if (prev === 'A_1_0') {
+    return next === 'A_1_0' || next === 'ONE_ONE';
+  }
+
+  if (prev === 'B_1_0') {
+    return next === 'B_1_0' || next === 'ONE_ONE';
+  }
+
+  if (prev === 'ONE_ONE') {
+    return next === 'ONE_ONE';
+  }
+
+  return false;
+}
+
+/**
+ * Valida que una nueva captura sea consistente con la ya almacenada.
+ * Sin capa de edicion, solo se aceptan reenvios idempotentes
+ * o finales compatibles con el parcial previamente ingresado.
+ *
+ * @param {Object} match
+ * @param {string} mode
+ * @param {Object} payload
+ */
+function validateResultCaptureConsistency(match, mode, payload) {
+  const currentMode = String(match.result_mode || '').trim();
+  const currentClosingState = String(match.closing_state || '').trim();
+  const currentSetsA = valueOrBlank(match.sets_a);
+  const currentSetsB = valueOrBlank(match.sets_b);
+
+  if (!currentMode) {
+    return;
+  }
+
+  if (currentMode === 'final') {
+    if (mode !== 'final') {
+      throw new Error('El partido ya tiene un resultado final. Para cambiarlo se requerira una edicion confirmada.');
+    }
+
+    const nextSetsA = Number(payload.sets_a);
+    const nextSetsB = Number(payload.sets_b);
+    if (String(currentSetsA) !== String(nextSetsA) || String(currentSetsB) !== String(nextSetsB)) {
+      throw new Error('El partido ya tiene un resultado final distinto. No se puede sobrescribir sin una capa de edicion.');
+    }
+
+    return;
+  }
+
+  if (currentMode === 'closing_state') {
+    if (mode === 'closing_state') {
+      const nextClosingState = String(payload.closing_state || '').trim();
+      if (!isClosingStateCompatibleWithPrevious(currentClosingState, nextClosingState)) {
+        throw new Error(`El estado parcial ${nextClosingState} no es consistente con el parcial previo ${currentClosingState}.`);
+      }
+      return;
+    }
+
+    if (mode === 'final') {
+      const nextSetsA = Number(payload.sets_a);
+      const nextSetsB = Number(payload.sets_b);
+      if (!isFinalCompatibleWithClosingState(currentClosingState, nextSetsA, nextSetsB)) {
+        throw new Error(`El resultado final ${nextSetsA}-${nextSetsB} no es consistente con el parcial ${currentClosingState}.`);
+      }
+    }
+  }
+}
+
+function valueOrBlank(value) {
+  return value === null || typeof value === 'undefined' ? '' : value;
+}
+
+/**
  * Registra un resultado final o un estado de cierre.
  *
  * payload esperado:
@@ -158,6 +282,8 @@ function submitMatchResult(matchId, payload) {
     // Para MVP prefiero error explícito.
     throw new Error(`El rol ${submittedByRole} no puede sobrescribir un resultado existente de rol ${currentRole}`);
   }
+
+  validateResultCaptureConsistency(match, mode, payload);
 
   if (mode === 'final') {
     const setsA = Number(payload.sets_a);
