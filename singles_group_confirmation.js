@@ -233,19 +233,16 @@ function createInitialGroupBlocksAfterExistingBlocks() {
   const startBase = lastBlock ? parseBlockDate(lastBlock.end_ts) : getTournamentStartDate();
 
   for (let i = 0; i < 3; i++) {
-    const start = addMinutes(startBase, i * 20);
-    const closeSignal = addMinutes(start, 15);
-    const hardClose = addMinutes(start, 18);
-    const end = addMinutes(start, 20);
+    const window = buildBlockWindowFromBase(startBase, i * getBlockTotalMinutes());
 
     createBlock({
       block_id: maxBlockId + i + 1,
       phase_type: 'groups',
       phase_label: `Grupos R${i + 1}`,
-      start_ts: start,
-      close_signal_ts: closeSignal,
-      hard_close_ts: hardClose,
-      end_ts: end,
+      start_ts: window.start,
+      close_signal_ts: window.closeSignal,
+      hard_close_ts: window.hardClose,
+      end_ts: window.end,
       status: 'scheduled',
       published_at: '',
       closed_at: '',

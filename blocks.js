@@ -34,7 +34,7 @@ function getCurrentBlock() {
  * @param {Object} patch
  */
 function updateBlock(blockId, patch) {
-  updateRowById('Blocks', 'block_id', blockId, patch);
+  updateRowById('Blocks', 'block_id', blockId, normalizeBlockDateFields_(patch));
 }
 
 /**
@@ -42,7 +42,7 @@ function updateBlock(blockId, patch) {
  * @param {Object} block
  */
 function createBlock(block) {
-  appendRow('Blocks', block);
+  appendRow('Blocks', normalizeBlockDateFields_(block));
 }
 
 /**
@@ -133,22 +133,14 @@ function activateNextBlock() {
  * @returns {Date|null}
  */
 function parseBlockDate(value) {
-  if (!value) return null;
+  const normalized = normalizeDateTimeText(value);
+  if (!normalized) return null;
 
-  if (Object.prototype.toString.call(value) === '[object Date]') {
-    if (!Number.isNaN(value.getTime())) return value;
-    return null;
-  }
-
-  const str = String(value).trim();
-  if (!str) return null;
-
-  const parts = str.split(' ');
+  const parts = normalized.split(' ');
   if (parts.length !== 2) return null;
 
   const datePart = parts[0];
   const timePart = parts[1];
-
   const d = datePart.split('-').map(Number);
   const t = timePart.split(':').map(Number);
 
@@ -156,9 +148,74 @@ function parseBlockDate(value) {
 
   const [year, month, day] = d;
   const [hour, minute, second] = t;
+  const parsed = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
 
-  const parsed = new Date(year, month - 1, day, hour, minute, second);
-  if (Number.isNaN(parsed.getTime())) return null;
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
 
-  return parsed;
+/**
+ * Normaliza una fecha/hora a texto canonico yyyy-MM-dd HH:mm:ss.
+ * Para objetos Date usa la zona horaria operativa de la app.
+ *
+ * @param {any} value
+ * @returns {string}
+ */
+function normalizeDateTimeText(value) {
+  if (value === null || typeof value === 'undefined' || value === '') return '';
+
+  if (Object.prototype.toString.call(value) === '[object Date]') {
+    return Number.isNaN(value.getTime()) ? '' : formatDateTime(value);
+  }
+
+  let str = String(value).trim();
+  if (!str) return '';
+
+  if (str.charAt(0) === "'") {
+    str = str.slice(1).trim();
+  }
+
+  let match = str.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})(?::(\d{2}))?$/);
+  if (match) {
+    return `${match[1]}-${match[2]}-${match[3]} ${match[4]}:${match[5]}:${match[6] || '00'}`;
+  }
+
+  match = str.match(/^(\d{2})\/(\d{2})\/(\d{4}) (\d{2}):(\d{2})(?::(\d{2}))?$/);
+  if (match) {
+    return `${match[3]}-${match[2]}-${match[1]} ${match[4]}:${match[5]}:${match[6] || '00'}`;
+  }
+
+  const nativeDate = new Date(str);
+  if (!Number.isNaN(nativeDate.getTime())) {
+    return formatDateTime(nativeDate);
+  }
+
+  return '';
+}
+
+/**
+ * Normaliza los campos temporales de Blocks antes de persistirlos en Sheets.
+ * Esto evita corrimientos de zona horaria al guardar Date nativo en celdas.
+ *
+ * @param {Object} rowLike
+ * @returns {Object}
+ */
+function normalizeBlockDateFields_(rowLike) {
+  const normalized = { ...rowLike };
+  const dateKeys = ['start_ts', 'close_signal_ts', 'hard_close_ts', 'end_ts'];
+
+  dateKeys.forEach(key => {
+    if (!Object.prototype.hasOwnProperty.call(normalized, key)) return;
+
+    const value = normalized[key];
+    if (value === null || value === '' || typeof value === 'undefined') return;
+
+    const text = normalizeDateTimeText(value);
+    if (!text) {
+      throw new Error(`Fecha de bloque invalida para ${key}: ${value}`);
+    }
+
+    normalized[key] = `'${text}`;
+  });
+
+  return normalized;
 }

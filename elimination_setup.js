@@ -159,10 +159,7 @@ function createInitialEliminationBlocks(matchups) {
   const lastBlock = blocks.length ? getBlocksSorted()[blocks.length - 1] : null;
   const startBase = lastBlock ? parseBlockDate(lastBlock.end_ts) : getTournamentStartDate();
 
-  const start = addMinutes(startBase, 0);
-  const closeSignal = addMinutes(start, 15);
-  const hardClose = addMinutes(start, 18);
-  const end = addMinutes(start, 20);
+  const window = buildBlockWindowFromBase(startBase);
 
   const newBlockId = maxBlockId + 1;
 
@@ -170,10 +167,10 @@ function createInitialEliminationBlocks(matchups) {
     block_id: newBlockId,
     phase_type: 'singles',
     phase_label: 'Singles · Primera ronda',
-    start_ts: start,
-    close_signal_ts: closeSignal,
-    hard_close_ts: hardClose,
-    end_ts: end,
+    start_ts: window.start,
+    close_signal_ts: window.closeSignal,
+    hard_close_ts: window.hardClose,
+    end_ts: window.end,
     status: 'scheduled',
     published_at: '',
     closed_at: '',

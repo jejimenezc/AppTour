@@ -179,6 +179,95 @@
     border-color: #fecaca;
   }
 
+  .admin-grid {
+    display: grid;
+    grid-template-columns: minmax(240px, 1.2fr) minmax(0, 1.8fr);
+    gap: 16px;
+    align-items: start;
+  }
+
+  .admin-field,
+  .admin-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .admin-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-text-input {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 12px;
+    border: 1px solid #cbd5e1;
+    font-size: 14px;
+    background: #ffffff;
+    color: #0f172a;
+  }
+
+  .admin-action-button {
+    padding: 10px 14px;
+    border-radius: 12px;
+    border: 1px solid #cbd5e1;
+    background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
+    color: #ffffff;
+    font-weight: bold;
+    cursor: pointer;
+    transition: transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
+    box-shadow: 0 6px 16px rgba(15, 23, 42, 0.10);
+  }
+
+  .admin-action-button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 10px 18px rgba(15, 23, 42, 0.12);
+  }
+
+  .admin-action-button[disabled] {
+    opacity: 0.6;
+    cursor: wait;
+    transform: none;
+    box-shadow: none;
+  }
+
+  .admin-action-button-secondary {
+    background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+    color: #0f172a;
+  }
+
+  .admin-action-button-danger {
+    border-color: #ef4444;
+    background: linear-gradient(180deg, #dc2626 0%, #991b1b 100%);
+  }
+
+  .admin-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .admin-kv {
+    display: grid;
+    grid-template-columns: minmax(120px, 160px) minmax(0, 1fr);
+    gap: 8px 12px;
+    align-items: start;
+  }
+
+  .admin-kv-label {
+    color: var(--muted);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .admin-code {
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 13px;
+    word-break: break-word;
+  }
+
   #capture-modal-overlay .capture-action {
     width: 100%;
     padding: 12px 14px;
@@ -255,9 +344,18 @@
       flex-direction: column;
       align-items: flex-start;
     }
+
+    .admin-grid,
+    .admin-summary-grid {
+      grid-template-columns: 1fr;
+    }
   }
 
   @media (max-width: 640px) {
+    .admin-actions {
+      grid-template-columns: 1fr;
+    }
+
     .page {
       padding: 16px;
     }

@@ -130,6 +130,191 @@ function getCheckedInPlayersForSelector() {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+function getAdminControlViewModel() {
+  const currentBlock = getCurrentBlock();
+  const triggerStatus = getTournamentClockTriggerStatus();
+  const doublesSummary = getDoublesStatusSummary();
+  const matches = getRows('Matches');
+  const tournamentStatus = String(getConfigValue('tournament_status') || '').trim();
+  const timing = getBlockTimingConfig();
+  const canConfirmGroups = tournamentStatus === 'awaiting_singles_group_confirmation';
+  const canScheduleDoublesFinal = isReservedDoublesFinalPendingBlock();
+
+  return {
+    tournamentStatus: tournamentStatus,
+    tournamentStartTs: String(getConfigValue('tournament_start_ts') || '').trim(),
+    timeZone: getTimeZoneDiagnostics(),
+    currentBlock: currentBlock
+      ? {
+          id: currentBlock.block_id,
+          phaseType: String(currentBlock.phase_type || ''),
+          phaseLabel: String(currentBlock.phase_label || ''),
+          status: String(currentBlock.status || ''),
+          startTs: serializeDateForClient(currentBlock.start_ts),
+          closeSignalTs: serializeDateForClient(currentBlock.close_signal_ts),
+          hardCloseTs: serializeDateForClient(currentBlock.hard_close_ts),
+          endTs: serializeDateForClient(currentBlock.end_ts),
+          publishedAt: String(currentBlock.published_at || ''),
+          closedAt: String(currentBlock.closed_at || ''),
+        }
+      : null,
+    counts: {
+      players: getRows('Players').length,
+      groups: getRows('Groups').length,
+      matches: matches.length,
+      doublesTeams: getRows('DoublesTeams').length,
+      blocks: getRows('Blocks').length,
+      scheduledMatches: matches.filter(match => String(match.status || '') === 'scheduled').length,
+      liveMatches: matches.filter(match => String(match.status || '') === 'live').length,
+      finalMatches: matches.filter(match => String(match.result_mode || '') === 'final').length,
+    },
+    timing: {
+      playMinutes: timing.playMinutes,
+      closeMinutes: timing.closeMinutes,
+      transitionMinutes: timing.transitionMinutes,
+      totalMinutes: getBlockTotalMinutes(),
+    },
+    doublesSummary: doublesSummary,
+    trigger: triggerStatus,
+    checkpoints: {
+      canConfirmGroups: canConfirmGroups,
+      canScheduleDoublesFinal: canScheduleDoublesFinal,
+    },
+    generatedAt: nowIso(),
+  };
+}
+
+function setTournamentStartTsFromUi(rawValue) {
+  const normalized = normalizeTournamentStartInput_(rawValue);
+  setConfigValue('tournament_start_ts', normalized, 'Hora base del torneo');
+  return getAdminControlViewModel();
+}
+
+function setTournamentStartNowFromUi() {
+  const value = nowIso();
+  setConfigValue('tournament_start_ts', value, 'Hora base del torneo');
+  return getAdminControlViewModel();
+}
+
+function initializeTournamentFlowV2FromUi() {
+  initializeTournamentFlowV2();
+  return getAdminControlViewModel();
+}
+
+function seedDemoDoublesConfigFromUi() {
+  seedDemoDoublesConfiguration_();
+  return getAdminControlViewModel();
+}
+
+function setupDoublesStageFromUi() {
+  const validation = validateDoublesCut();
+  if (!validation.ok) {
+    throw new Error(validation.errors.join(' '));
+  }
+
+  const blockId = setupDoublesStageFromCut();
+  const vm = getAdminControlViewModel();
+  vm.lastActionMessage = blockId
+    ? `Bloque inicial de dobles generado: ${blockId}`
+    : 'No se genero un bloque de dobles.';
+  return vm;
+}
+
+function runTournamentClockNowFromUi() {
+  tickTournamentClock();
+  const vm = getAdminControlViewModel();
+  vm.lastActionMessage = 'Tick ejecutado manualmente.';
+  return vm;
+}
+
+function setClockTriggerEnabledFromUi(enabled) {
+  const nextValue = !!enabled;
+  setConfigValue('clock_trigger_enabled', nextValue, 'Habilita el trigger automatico del reloj');
+  const vm = getAdminControlViewModel();
+  vm.lastActionMessage = nextValue ? 'Reloj automatico reanudado.' : 'Reloj automatico pausado.';
+  return vm;
+}
+
+function confirmSinglesGroupsFromUi() {
+  confirmSinglesGroupsAndStartGroupStage();
+  const vm = getAdminControlViewModel();
+  vm.lastActionMessage = 'Grupos confirmados. Fase de grupos iniciada.';
+  return vm;
+}
+
+function scheduleDoublesFinalFromUi() {
+  const blockId = createDoublesFinalBlockIfNeeded();
+  if (!blockId) {
+    throw new Error('No hay final de dobles reservada pendiente de bloque.');
+  }
+
+  const vm = getAdminControlViewModel();
+  vm.lastActionMessage = `Final de dobles programada en bloque ${blockId}.`;
+  return vm;
+}
+
+function startDemoTournamentNowFromUi() {
+  const startTs = nowIso();
+  setConfigValue('tournament_start_ts', startTs, 'Hora base del torneo');
+  initializeTournamentFlowV2();
+  seedDemoDoublesConfiguration_();
+
+  const validation = validateDoublesCut();
+  if (!validation.ok) {
+    throw new Error(validation.errors.join(' '));
+  }
+
+  const blockId = setupDoublesStageFromCut();
+  tickTournamentClock();
+
+  const vm = getAdminControlViewModel();
+  vm.lastActionMessage = blockId
+    ? `Simulacion iniciada. Bloque de dobles ${blockId} listo y reloj ejecutado.`
+    : 'Simulacion iniciada sin bloque de dobles.';
+  return vm;
+}
+
+function normalizeTournamentStartInput_(rawValue) {
+  const value = String(rawValue || '').trim().replace('T', ' ');
+  if (!value) {
+    throw new Error('Ingresa tournament_start_ts antes de guardar.');
+  }
+
+  const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(value)
+    ? `${value}:00`
+    : value;
+
+  const canonical = normalizeDateTimeText(normalized);
+  if (!canonical) {
+    throw new Error(`tournament_start_ts invalido: "${value}". Usa yyyy-mm-dd hh:mm:ss.`);
+  }
+
+  return canonical;
+}
+
+function seedDemoDoublesConfiguration_() {
+  openDoublesConfirmationWindow();
+
+  const eligible = getPlayers().filter(player =>
+    (player.checked_in === true || String(player.checked_in) === 'TRUE') &&
+    String(player.doubles_status || '') === 'eligible'
+  );
+
+  if (eligible.length < 6) {
+    throw new Error('No hay suficientes jugadores elegibles para armar el helper de dobles demo.');
+  }
+
+  proposePartner(eligible[0].player_id, eligible[1].player_id);
+  confirmPartner(eligible[1].player_id);
+
+  proposePartner(eligible[2].player_id, eligible[3].player_id);
+  confirmPartner(eligible[3].player_id);
+
+  for (let i = 4; i < eligible.length; i++) {
+    optIntoPool(eligible[i].player_id);
+  }
+}
+
 /**
  * Wrapper UI -> motor real
  *
@@ -314,7 +499,7 @@ function capitalize(value) {
 function serializeDateForClient(value) {
   if (!value) return '';
   if (Object.prototype.toString.call(value) === '[object Date]' && !Number.isNaN(value.getTime())) {
-    return Utilities.formatDate(value, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
+    return Utilities.formatDate(value, getAppTimeZone(), 'yyyy-MM-dd HH:mm:ss');
   }
   return String(value);
 }

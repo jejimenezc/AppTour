@@ -76,5 +76,75 @@
         <div class="empty">Ingresa un player_id para ver tu jornada.</div>
       </div>
     </section>
+    <section class="card">
+      <div class="row-between" style="margin-bottom: 12px; align-items: flex-end; flex-wrap: wrap;">
+        <div>
+          <h2 class="section-title" style="margin: 0;">Control Provisorio</h2>
+          <p class="helper" style="margin-top: 6px;">Panel temporal para reset, setup y simulacion de torneo.</p>
+        </div>
+
+        <button class="admin-action-button admin-action-button-secondary" onclick="loadAdminControl()">
+          Actualizar panel
+        </button>
+      </div>
+
+      <div class="card-soft" style="margin-bottom: 12px;">
+        <div class="admin-grid">
+          <div class="admin-field">
+            <div class="stat-label" style="margin-bottom: 6px;">Tournament start ts</div>
+            <input
+              id="admin-start-ts-input"
+              class="admin-text-input"
+              type="text"
+              placeholder="2026-04-18 13:20:00"
+            >
+            <div class="helper" style="margin-top: 6px;">Usa formato yyyy-mm-dd hh:mm:ss o el boton para usar la hora actual.</div>
+          </div>
+
+          <div class="admin-actions">
+            <button class="admin-action-button" onclick="saveTournamentStartTsFromAdmin()">
+              Guardar hora base
+            </button>
+            <button class="admin-action-button admin-action-button-secondary" onclick="setTournamentStartNowFromAdmin()">
+              Usar ahora
+            </button>
+            <button class="admin-action-button admin-action-button-secondary" onclick="initializeTournamentFlowV2FromAdmin()">
+              Reset V2
+            </button>
+            <button class="admin-action-button admin-action-button-secondary" onclick="seedDemoDoublesFromAdmin()">
+              Helper dobles demo
+            </button>
+            <button class="admin-action-button admin-action-button-secondary" onclick="generateInitialDoublesFromAdmin()">
+              Generar dobles
+            </button>
+            <button class="admin-action-button admin-action-button-secondary" onclick="confirmSinglesGroupsFromAdmin()">
+              Confirmar grupos
+            </button>
+            <button class="admin-action-button admin-action-button-secondary" onclick="scheduleDoublesFinalFromAdmin()">
+              Programar final dobles
+            </button>
+            <button class="admin-action-button admin-action-button-secondary" onclick="runTickNowFromAdmin()">
+              Tick ahora
+            </button>
+            <button
+              id="admin-toggle-clock-button"
+              class="admin-action-button admin-action-button-secondary"
+              onclick="toggleClockTriggerFromAdmin()"
+            >
+              Pausar reloj
+            </button>
+            <button class="admin-action-button admin-action-button-danger" onclick="startDemoTournamentNowFromAdmin()">
+              Iniciar ahora
+            </button>
+          </div>
+        </div>
+
+        <div id="admin-action-feedback" class="helper" style="margin-top: 12px;"></div>
+      </div>
+
+      <div id="admin-control-content">
+        <div class="loading">Cargando panel de control...</div>
+      </div>
+    </section>
   </div>
 </div>

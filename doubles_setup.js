@@ -263,10 +263,7 @@ function createInitialDoublesBlock() {
   const lastBlock = blocks.length ? blocks[blocks.length - 1] : null;
   const startBase = lastBlock ? parseBlockDate(lastBlock.end_ts) : getTournamentStartDate();
 
-  const start = addMinutes(startBase, 0);
-  const closeSignal = addMinutes(start, 15);
-  const hardClose = addMinutes(start, 18);
-  const end = addMinutes(start, 20);
+  const window = buildBlockWindowFromBase(startBase);
 
   const newBlockId = blocks.reduce((acc, b) => Math.max(acc, Number(b.block_id || 0)), 0) + 1;
 
@@ -274,10 +271,10 @@ function createInitialDoublesBlock() {
     block_id: newBlockId,
     phase_type: 'doubles',
     phase_label: 'Dobles · Primera ronda',
-    start_ts: start,
-    close_signal_ts: closeSignal,
-    hard_close_ts: hardClose,
-    end_ts: end,
+    start_ts: window.start,
+    close_signal_ts: window.closeSignal,
+    hard_close_ts: window.hardClose,
+    end_ts: window.end,
     status: 'scheduled',
     published_at: '',
     closed_at: '',

@@ -147,19 +147,16 @@ function createInitialGroupBlocks() {
   const blocks = [];
 
   for (let i = 0; i < 3; i++) {
-    const start = addMinutes(startBase, i * 20);
-    const closeSignal = addMinutes(start, 15);
-    const hardClose = addMinutes(start, 18);
-    const end = addMinutes(start, 20);
+    const window = buildBlockWindowFromBase(startBase, i * getBlockTotalMinutes());
 
     blocks.push({
       block_id: i + 1,
       phase_type: 'groups',
       phase_label: `Grupos R${i + 1}`,
-      start_ts: start,
-      close_signal_ts: closeSignal,
-      hard_close_ts: hardClose,
-      end_ts: end,
+      start_ts: window.start,
+      close_signal_ts: window.closeSignal,
+      hard_close_ts: window.hardClose,
+      end_ts: window.end,
       status: i === 0 ? 'scheduled' : 'scheduled',
       published_at: '',
       closed_at: '',
@@ -302,7 +299,7 @@ function assignTablesAndMatchOrderForGroupMatches(matches) {
  * Devuelve la fecha/hora de inicio del torneo.
  * Requiere Config.tournament_start_ts con un valor parseable.
  *
- * @returns {Date}
+ * @returns {string}
  */
 function getTournamentStartDate() {
   const raw = getConfigValue('tournament_start_ts');
@@ -312,35 +309,86 @@ function getTournamentStartDate() {
     throw new Error('Falta Config.tournament_start_ts. Define una fecha/hora base del torneo antes de generar bloques.');
   }
 
-  const parsed = parseTournamentStartDateValue_(value);
-  if (!parsed) {
+  const normalized = normalizeDateTimeText(value);
+  if (!normalized) {
     throw new Error(`Config.tournament_start_ts no es valida: "${value}". Usa un formato parseable, por ejemplo 2026-04-18 13:20:00.`);
   }
 
-  return parsed;
+  return normalized;
 }
 
 /**
- * Parsea tournament_start_ts aceptando Date real y strings comunes del proyecto.
+ * Lee y valida la configuracion temporal de bloques.
  *
- * @param {string|Date} value
- * @returns {Date|null}
+ * @returns {{playMinutes:number, closeMinutes:number, transitionMinutes:number}}
  */
-function parseTournamentStartDateValue_(value) {
-  if (Object.prototype.toString.call(value) === '[object Date]') {
-    return Number.isNaN(value.getTime()) ? null : value;
+function getBlockTimingConfig() {
+  const playMinutes = getPositiveBlockMinutesConfig_('block_play_min', 'duracion de juego');
+  const closeMinutes = getPositiveBlockMinutesConfig_('block_close_min', 'ventana de cierre');
+  const transitionMinutes = getPositiveBlockMinutesConfig_('block_transition_min', 'ventana de transicion');
+
+  return {
+    playMinutes,
+    closeMinutes,
+    transitionMinutes,
+  };
+}
+
+/**
+ * Devuelve la duracion total de un bloque.
+ *
+ * @returns {number}
+ */
+function getBlockTotalMinutes() {
+  const timing = getBlockTimingConfig();
+  return timing.playMinutes + timing.closeMinutes + timing.transitionMinutes;
+}
+
+/**
+ * Construye las ventanas temporales de un bloque a partir de una fecha base.
+ *
+ * @param {Date|string} startBase
+ * @param {number=} offsetMinutes
+ * @returns {{start:string, closeSignal:string, hardClose:string, end:string}}
+ */
+function buildBlockWindowFromBase(startBase, offsetMinutes) {
+  const timing = getBlockTimingConfig();
+  const offset = Number(offsetMinutes || 0);
+  const baseText = normalizeDateTimeText(startBase);
+
+  if (!baseText) {
+    throw new Error(`Fecha base invalida para construir bloque: ${startBase}`);
   }
 
-  const text = String(value || '').trim();
-  if (!text) return null;
+  const start = addMinutesToDateTimeText(baseText, offset);
+  const closeSignal = addMinutesToDateTimeText(start, timing.playMinutes);
+  const hardClose = addMinutesToDateTimeText(closeSignal, timing.closeMinutes);
+  const end = addMinutesToDateTimeText(hardClose, timing.transitionMinutes);
 
-  const blockDate = parseBlockDate(text);
-  if (blockDate) return blockDate;
+  return {
+    start: start,
+    closeSignal: closeSignal,
+    hardClose: hardClose,
+    end: end,
+  };
+}
 
-  const nativeDate = new Date(text);
-  if (!Number.isNaN(nativeDate.getTime())) return nativeDate;
+/**
+ * Lee una key de minutos de Config y exige entero positivo.
+ *
+ * @param {string} key
+ * @param {string} label
+ * @returns {number}
+ */
+function getPositiveBlockMinutesConfig_(key, label) {
+  const raw = getConfigValue(key);
+  const value = Number(raw);
 
-  return null;
+  if (!Number.isFinite(value) || value <= 0 || Math.floor(value) !== value) {
+    throw new Error(`Config.${key} invalido (${raw}). Define un entero positivo para ${label}.`);
+  }
+
+  return value;
 }
 
 /**
@@ -354,10 +402,35 @@ function addMinutes(date, minutes) {
 }
 
 /**
+ * Suma minutos a un timestamp canonico yyyy-MM-dd HH:mm:ss
+ * sin introducir conversiones de zona horaria en el texto resultante.
+ *
+ * @param {string} dateTimeText
+ * @param {number} minutes
+ * @returns {string}
+ */
+function addMinutesToDateTimeText(dateTimeText, minutes) {
+  const parsed = parseBlockDate(dateTimeText);
+  if (!parsed) {
+    throw new Error(`Fecha/hora invalida: ${dateTimeText}`);
+  }
+
+  const shifted = new Date(parsed.getTime() + Number(minutes || 0) * 60 * 1000);
+  const year = shifted.getUTCFullYear();
+  const month = String(shifted.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(shifted.getUTCDate()).padStart(2, '0');
+  const hour = String(shifted.getUTCHours()).padStart(2, '0');
+  const minute = String(shifted.getUTCMinutes()).padStart(2, '0');
+  const second = String(shifted.getUTCSeconds()).padStart(2, '0');
+
+  return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
+}
+
+/**
  * Formatea fecha-hora como string simple.
  * @param {Date} date
  * @returns {string}
  */
 function formatDateTime(date) {
-  return Utilities.formatDate(date, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
+  return Utilities.formatDate(date, getAppTimeZone(), 'yyyy-MM-dd HH:mm:ss');
 }

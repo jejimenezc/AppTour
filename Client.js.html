@@ -6,11 +6,14 @@
   let publicLoadInFlight = false;
   let publicLastSuccessAt = null;
   let currentMyDayVm = null;
+  let currentAdminVm = null;
+  let adminActionInFlight = false;
 
   document.addEventListener('DOMContentLoaded', function () {
     loadPublicScreen();
     startPublicAutoRefresh();
     loadPlayerSelector();
+    loadAdminControl();
   });
 
   function startPublicAutoRefresh() {
@@ -145,6 +148,301 @@
         console.error(err);
       })
       .getCheckedInPlayersForSelector();
+  }
+
+  function loadAdminControl() {
+    const root = document.getElementById('admin-control-content');
+    if (!root) return;
+
+    root.innerHTML = '<div class="loading">Cargando panel de control...</div>';
+    setAdminActionFeedback('');
+
+    google.script.run
+      .withSuccessHandler(function (vm) {
+        renderAdminControl(vm);
+      })
+      .withFailureHandler(renderAdminControlError)
+      .getAdminControlViewModel();
+  }
+
+  function renderAdminControl(vm) {
+    currentAdminVm = vm;
+
+    const root = document.getElementById('admin-control-content');
+    if (!root) return;
+
+    const startInput = document.getElementById('admin-start-ts-input');
+    if (startInput && !document.activeElement.isSameNode(startInput)) {
+      startInput.value = vm.tournamentStartTs || '';
+    }
+
+    updateAdminToggleClockButton(vm);
+    updateAdminCheckpointButtons(vm);
+
+    const currentBlockHtml = vm.currentBlock
+      ? `
+        <div class="card-soft">
+          <div class="stat-label" style="margin-bottom: 10px;">Bloque actual</div>
+          <div class="admin-kv">
+            <div class="admin-kv-label">Bloque</div>
+            <div class="admin-code">${escapeHtml(vm.currentBlock.id)} · ${escapeHtml(vm.currentBlock.phaseLabel || vm.currentBlock.phaseType)}</div>
+            <div class="admin-kv-label">Estado</div>
+            <div class="admin-code">${escapeHtml(vm.currentBlock.status || '-')}</div>
+            <div class="admin-kv-label">Inicio</div>
+            <div class="admin-code">${escapeHtml(vm.currentBlock.startTs || '-')}</div>
+            <div class="admin-kv-label">Cierre suave</div>
+            <div class="admin-code">${escapeHtml(vm.currentBlock.closeSignalTs || '-')}</div>
+            <div class="admin-kv-label">Hard close</div>
+            <div class="admin-code">${escapeHtml(vm.currentBlock.hardCloseTs || '-')}</div>
+            <div class="admin-kv-label">Fin</div>
+            <div class="admin-code">${escapeHtml(vm.currentBlock.endTs || '-')}</div>
+            <div class="admin-kv-label">Publicado</div>
+            <div class="admin-code">${escapeHtml(vm.currentBlock.publishedAt || '-')}</div>
+            <div class="admin-kv-label">Cerrado</div>
+            <div class="admin-code">${escapeHtml(vm.currentBlock.closedAt || '-')}</div>
+          </div>
+        </div>
+      `
+      : `
+        <div class="card-soft">
+          <div class="stat-label" style="margin-bottom: 10px;">Bloque actual</div>
+          <div class="empty" style="padding: 14px;">No hay bloque activo.</div>
+        </div>
+      `;
+
+    root.innerHTML = `
+      <div class="admin-summary-grid">
+        <div class="card-soft">
+          <div class="stat-label" style="margin-bottom: 10px;">Estado de torneo</div>
+          <div class="admin-kv">
+            <div class="admin-kv-label">Tournament status</div>
+            <div class="admin-code">${escapeHtml(vm.tournamentStatus || '-')}</div>
+            <div class="admin-kv-label">Hora base</div>
+            <div class="admin-code">${escapeHtml(vm.tournamentStartTs || '-')}</div>
+            <div class="admin-kv-label">Duracion bloque</div>
+            <div class="admin-code">${escapeHtml(vm.timing.totalMinutes || 0)} min (${escapeHtml(vm.timing.playMinutes || 0)} juego / ${escapeHtml(vm.timing.closeMinutes || 0)} cierre / ${escapeHtml(vm.timing.transitionMinutes || 0)} transicion)</div>
+            <div class="admin-kv-label">App TZ</div>
+            <div class="admin-code">${escapeHtml(vm.timeZone && vm.timeZone.appTimeZone || '-')}</div>
+            <div class="admin-kv-label">Generado</div>
+            <div class="admin-code">${escapeHtml(vm.generatedAt || '-')}</div>
+          </div>
+        </div>
+
+        ${currentBlockHtml}
+
+        <div class="card-soft">
+          <div class="stat-label" style="margin-bottom: 10px;">Resumen de datos</div>
+          <div class="admin-kv">
+            <div class="admin-kv-label">Players</div>
+            <div class="admin-code">${escapeHtml(vm.counts.players)}</div>
+            <div class="admin-kv-label">Groups</div>
+            <div class="admin-code">${escapeHtml(vm.counts.groups)}</div>
+            <div class="admin-kv-label">Matches</div>
+            <div class="admin-code">${escapeHtml(vm.counts.matches)}</div>
+            <div class="admin-kv-label">Blocks</div>
+            <div class="admin-code">${escapeHtml(vm.counts.blocks)}</div>
+            <div class="admin-kv-label">Doubles teams</div>
+            <div class="admin-code">${escapeHtml(vm.counts.doublesTeams)}</div>
+            <div class="admin-kv-label">Scheduled matches</div>
+            <div class="admin-code">${escapeHtml(vm.counts.scheduledMatches)}</div>
+            <div class="admin-kv-label">Live matches</div>
+            <div class="admin-code">${escapeHtml(vm.counts.liveMatches)}</div>
+            <div class="admin-kv-label">Final matches</div>
+            <div class="admin-code">${escapeHtml(vm.counts.finalMatches)}</div>
+          </div>
+        </div>
+
+        <div class="card-soft">
+          <div class="stat-label" style="margin-bottom: 10px;">Dobles y trigger</div>
+          <div class="admin-kv">
+            <div class="admin-kv-label">Eligible</div>
+            <div class="admin-code">${escapeHtml(vm.doublesSummary.eligible || 0)}</div>
+            <div class="admin-kv-label">Partner confirmed</div>
+            <div class="admin-code">${escapeHtml(vm.doublesSummary.partner_confirmed || 0)}</div>
+            <div class="admin-kv-label">Pool</div>
+            <div class="admin-code">${escapeHtml(vm.doublesSummary.pool || 0)}</div>
+            <div class="admin-kv-label">Trigger enabled</div>
+            <div class="admin-code">${escapeHtml(vm.trigger.enabled ? 'TRUE' : 'FALSE')}</div>
+            <div class="admin-kv-label">Trigger count</div>
+            <div class="admin-code">${escapeHtml(vm.trigger.triggerCount || 0)}</div>
+            <div class="admin-kv-label">Last run</div>
+            <div class="admin-code">${escapeHtml(vm.trigger.lastRunAt || '-')}</div>
+            <div class="admin-kv-label">Sheet / Script TZ</div>
+            <div class="admin-code">${escapeHtml(vm.timeZone ? `${vm.timeZone.spreadsheetTimeZone || '-'} / ${vm.timeZone.scriptTimeZone || '-'}` : '-')}</div>
+            <div class="admin-kv-label">Last error</div>
+            <div class="admin-code">${escapeHtml(vm.trigger.lastError || '-')}</div>
+            <div class="admin-kv-label">Confirmar grupos</div>
+            <div class="admin-code">${escapeHtml(vm.checkpoints.canConfirmGroups ? 'Disponible' : 'No aplica')}</div>
+            <div class="admin-kv-label">Final dobles</div>
+            <div class="admin-code">${escapeHtml(vm.checkpoints.canScheduleDoublesFinal ? 'Disponible' : 'No aplica')}</div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    if (vm.lastActionMessage) {
+      setAdminActionFeedback(vm.lastActionMessage);
+    }
+  }
+
+  function renderAdminControlError(error) {
+    const root = document.getElementById('admin-control-content');
+    if (!root) return;
+
+    const message = error && error.message ? error.message : String(error || 'Error desconocido');
+    root.innerHTML = `<div class="error">No se pudo cargar el panel de control: ${escapeHtml(message)}</div>`;
+  }
+
+  function saveTournamentStartTsFromAdmin() {
+    const input = document.getElementById('admin-start-ts-input');
+    const value = input ? input.value : '';
+    runAdminAction('Guardando hora base...', 'Hora base guardada.', function () {
+      google.script.run
+        .withSuccessHandler(handleAdminActionSuccess)
+        .withFailureHandler(handleAdminActionError)
+        .setTournamentStartTsFromUi(value);
+    });
+  }
+
+  function setTournamentStartNowFromAdmin() {
+    runAdminAction('Guardando hora base actual...', 'Hora base actualizada.', function () {
+      google.script.run
+        .withSuccessHandler(handleAdminActionSuccess)
+        .withFailureHandler(handleAdminActionError)
+        .setTournamentStartNowFromUi();
+    });
+  }
+
+  function initializeTournamentFlowV2FromAdmin() {
+    runAdminAction('Reseteando flujo V2...', 'Flujo V2 reseteado.', function () {
+      google.script.run
+        .withSuccessHandler(handleAdminActionSuccess)
+        .withFailureHandler(handleAdminActionError)
+        .initializeTournamentFlowV2FromUi();
+    });
+  }
+
+  function seedDemoDoublesFromAdmin() {
+    runAdminAction('Aplicando helper de dobles demo...', 'Helper de dobles demo aplicado.', function () {
+      google.script.run
+        .withSuccessHandler(handleAdminActionSuccess)
+        .withFailureHandler(handleAdminActionError)
+        .seedDemoDoublesConfigFromUi();
+    });
+  }
+
+  function generateInitialDoublesFromAdmin() {
+    runAdminAction('Generando bloque inicial de dobles...', '', function () {
+      google.script.run
+        .withSuccessHandler(handleAdminActionSuccess)
+        .withFailureHandler(handleAdminActionError)
+        .setupDoublesStageFromUi();
+    });
+  }
+
+  function confirmSinglesGroupsFromAdmin() {
+    runAdminAction('Confirmando grupos de singles...', '', function () {
+      google.script.run
+        .withSuccessHandler(handleAdminActionSuccess)
+        .withFailureHandler(handleAdminActionError)
+        .confirmSinglesGroupsFromUi();
+    });
+  }
+
+  function scheduleDoublesFinalFromAdmin() {
+    runAdminAction('Programando final de dobles...', '', function () {
+      google.script.run
+        .withSuccessHandler(handleAdminActionSuccess)
+        .withFailureHandler(handleAdminActionError)
+        .scheduleDoublesFinalFromUi();
+    });
+  }
+
+  function runTickNowFromAdmin() {
+    runAdminAction('Ejecutando tick manual...', '', function () {
+      google.script.run
+        .withSuccessHandler(handleAdminActionSuccess)
+        .withFailureHandler(handleAdminActionError)
+        .runTournamentClockNowFromUi();
+    });
+  }
+
+  function toggleClockTriggerFromAdmin() {
+    const enabled = currentAdminVm && currentAdminVm.trigger ? !!currentAdminVm.trigger.enabled : false;
+    const nextValue = !enabled;
+    runAdminAction(nextValue ? 'Reanudando reloj automatico...' : 'Pausando reloj automatico...', '', function () {
+      google.script.run
+        .withSuccessHandler(handleAdminActionSuccess)
+        .withFailureHandler(handleAdminActionError)
+        .setClockTriggerEnabledFromUi(nextValue);
+    });
+  }
+
+  function startDemoTournamentNowFromAdmin() {
+    runAdminAction('Iniciando simulacion ahora...', '', function () {
+      google.script.run
+        .withSuccessHandler(handleAdminActionSuccess)
+        .withFailureHandler(handleAdminActionError)
+        .startDemoTournamentNowFromUi();
+    });
+  }
+
+  function runAdminAction(loadingText, fallbackSuccessText, executor) {
+    if (adminActionInFlight) return;
+    adminActionInFlight = true;
+    setAdminButtonsDisabled(true);
+    setAdminActionFeedback(loadingText || 'Procesando...');
+    window.__adminFallbackSuccessText = fallbackSuccessText || '';
+    executor();
+  }
+
+  function handleAdminActionSuccess(vm) {
+    adminActionInFlight = false;
+    setAdminButtonsDisabled(false);
+    renderAdminControl(vm);
+    if (!vm || !vm.lastActionMessage) {
+      setAdminActionFeedback(window.__adminFallbackSuccessText || 'Operacion completada.');
+    }
+  }
+
+  function handleAdminActionError(error) {
+    adminActionInFlight = false;
+    setAdminButtonsDisabled(false);
+    const message = error && error.message ? error.message : String(error || 'Error desconocido');
+    setAdminActionFeedback(message, true);
+  }
+
+  function setAdminButtonsDisabled(disabled) {
+    const buttons = document.querySelectorAll('.admin-action-button');
+    buttons.forEach(function (button) {
+      button.disabled = disabled;
+    });
+  }
+
+  function updateAdminToggleClockButton(vm) {
+    const button = document.getElementById('admin-toggle-clock-button');
+    if (!button) return;
+    const enabled = vm && vm.trigger ? !!vm.trigger.enabled : false;
+    button.textContent = enabled ? 'Pausar reloj' : 'Reanudar reloj';
+  }
+
+  function updateAdminCheckpointButtons(vm) {
+    const confirmGroupsButton = document.querySelector('button[onclick="confirmSinglesGroupsFromAdmin()"]');
+    if (confirmGroupsButton) {
+      confirmGroupsButton.disabled = !(vm && vm.checkpoints && vm.checkpoints.canConfirmGroups);
+    }
+
+    const doublesFinalButton = document.querySelector('button[onclick="scheduleDoublesFinalFromAdmin()"]');
+    if (doublesFinalButton) {
+      doublesFinalButton.disabled = !(vm && vm.checkpoints && vm.checkpoints.canScheduleDoublesFinal);
+    }
+  }
+
+  function setAdminActionFeedback(text, isError) {
+    const el = document.getElementById('admin-action-feedback');
+    if (!el) return;
+    el.textContent = text || '';
+    el.style.color = isError ? '#991b1b' : '';
   }
 
   function renderPlayerSelector(players) {

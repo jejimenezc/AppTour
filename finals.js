@@ -51,10 +51,7 @@ function createDoublesFinalBlockIfNeeded() {
   if (!finalMatch) return null;
 
   const startBase = getNextBlockStartBase();
-  const start = addMinutes(startBase, 0);
-  const closeSignal = addMinutes(start, 15);
-  const hardClose = addMinutes(start, 18);
-  const end = addMinutes(start, 20);
+  const window = buildBlockWindowFromBase(startBase);
 
   const newBlockId = getNextBlockId();
 
@@ -62,10 +59,10 @@ function createDoublesFinalBlockIfNeeded() {
     block_id: newBlockId,
     phase_type: 'doubles',
     phase_label: 'Final de dobles',
-    start_ts: start,
-    close_signal_ts: closeSignal,
-    hard_close_ts: hardClose,
-    end_ts: end,
+    start_ts: window.start,
+    close_signal_ts: window.closeSignal,
+    hard_close_ts: window.hardClose,
+    end_ts: window.end,
     status: 'scheduled',
     published_at: '',
     closed_at: '',
@@ -100,10 +97,7 @@ function createSinglesFinalsBlockIfNeeded() {
   if (!oroFinal || !plataFinal || !cobreFinal) return null;
 
   const startBase = getNextBlockStartBase();
-  const start = addMinutes(startBase, 0);
-  const closeSignal = addMinutes(start, 15);
-  const hardClose = addMinutes(start, 18);
-  const end = addMinutes(start, 20);
+  const window = buildBlockWindowFromBase(startBase);
 
   const newBlockId = getNextBlockId();
 
@@ -111,10 +105,10 @@ function createSinglesFinalsBlockIfNeeded() {
     block_id: newBlockId,
     phase_type: 'singles',
     phase_label: 'Finales de singles',
-    start_ts: start,
-    close_signal_ts: closeSignal,
-    hard_close_ts: hardClose,
-    end_ts: end,
+    start_ts: window.start,
+    close_signal_ts: window.closeSignal,
+    hard_close_ts: window.hardClose,
+    end_ts: window.end,
     status: 'scheduled',
     published_at: '',
     closed_at: '',
