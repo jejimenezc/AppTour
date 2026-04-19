@@ -462,7 +462,7 @@
     });
 
     select.innerHTML =
-      '<option value="">Selecciona tu nombre</option>' +
+      '<option value="">Selecciona para ver tu jornada</option>' +
       options.join('');
 
     if (savedPlayerId && players.some(p => p.id === savedPlayerId)) {
@@ -475,8 +475,9 @@
     const playerId = select.value;
 
     if (!playerId) {
-      if (!isAutoLoad) {
-        alert('Selecciona tu nombre');
+      const root = document.getElementById('myday-content');
+      if (root) {
+        root.innerHTML = '<div class="empty">Selecciona para ver tu jornada.</div>';
       }
       return;
     }

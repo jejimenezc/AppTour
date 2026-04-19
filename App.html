@@ -51,29 +51,23 @@
       </div>
 
       <div class="card-soft" style="margin-bottom: 12px;">
-        <div class="row-between" style="align-items: end; gap: 12px; flex-wrap: wrap;">
+        <div style="display: flex; align-items: end; gap: 12px; flex-wrap: wrap;">
           <div style="flex: 1; min-width: 220px;">
             <div class="stat-label" style="margin-bottom: 6px;">Selecciona tu nombre</div>
 
             <select
               id="my-player-select"
+              onchange="loadMyDayFromSelect(true)"
               style="width: 100%; padding: 10px 12px; border-radius: 12px; border: 1px solid #cbd5e1; font-size: 14px;"
             >
               <option value="">Cargando jugadores...</option>
             </select>
           </div>
-
-          <button
-            onclick="loadMyDayFromSelect()"
-            style="padding: 10px 16px; border-radius: 12px; border: 0; background: #0f172a; color: white; font-weight: bold; cursor: pointer;"
-          >
-            Ver mi jornada
-          </button>
         </div>
       </div>
 
       <div id="myday-content">
-        <div class="empty">Ingresa un player_id para ver tu jornada.</div>
+        <div class="empty">Selecciona para ver tu jornada.</div>
       </div>
     </section>
     <section class="card">
