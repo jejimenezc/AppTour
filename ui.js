@@ -97,6 +97,7 @@ function getMyDayViewModel(playerId) {
           allowedCaptureActions: getAllowedCaptureActions(currentMatch, playerId),
         }
       : null,
+    timeline: buildMyDayTimeline(playerId, currentBlock),
     generatedAt: nowIso(),
   };
 }
@@ -127,6 +128,123 @@ function getCheckedInPlayersForSelector() {
       name: resolvePlayerFullName(p.player_id),
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function buildMyDayTimeline(playerId, currentBlock) {
+  const currentBlockId = currentBlock ? Number(currentBlock.block_id || 0) : 0;
+  const blocks = getBlocksSorted();
+  const upcomingBlocks = blocks.filter(block => {
+    const blockId = Number(block.block_id || 0);
+    if (currentBlockId) return blockId >= currentBlockId;
+    return String(block.status || '').trim() !== 'closed';
+  });
+
+  const blockEntries = upcomingBlocks
+    .slice(0, 4)
+    .map(block => buildMyDayBlockTimelineEntry(block, playerId));
+
+  const timeline = [...blockEntries];
+  const syntheticEntries = buildMyDaySyntheticTimelineEntries(blocks);
+
+  syntheticEntries.forEach(entry => {
+    if (timeline.length < 6) timeline.push(entry);
+  });
+
+  return timeline.slice(0, 6);
+}
+
+function buildMyDayBlockTimelineEntry(block, playerId) {
+  const blockId = String(block.block_id || '').trim();
+  const matches = getMatchesByBlock(blockId);
+  const match = matches.find(item => isPlayerInMatch(item, playerId));
+
+  if (!match) {
+    return {
+      kind: 'block',
+      title: `Bloque ${blockId} · Espera`,
+      primary: 'Sin asignación aún',
+      secondary: String(block.phase_label || ''),
+      tone: 'idle',
+    };
+  }
+
+  const context = buildPlayerMatchContext(match, playerId);
+  const isBye = isByeAdvanceMatch(match);
+  const roleLabel = isBye
+    ? 'Libre'
+    : context.isReferee
+      ? 'Árbitro'
+      : 'Juega';
+
+  return {
+    kind: 'block',
+    title: `Bloque ${blockId} · ${roleLabel}`,
+    primary: buildTimelinePrimaryLabel_(match),
+    secondary: String(block.phase_label || ''),
+    tone: isBye ? 'idle' : context.isReferee ? 'referee' : 'play',
+  };
+}
+
+function buildMyDaySyntheticTimelineEntries(blocks) {
+  const entries = [];
+  const tournamentStatus = String(getConfigValue('tournament_status') || '').trim();
+  const hasGroupsBlocks = blocks.some(block => String(block.phase_type || '').trim() === 'groups');
+  const hasSinglesBlocks = blocks.some(block => String(block.phase_type || '').trim() === 'singles');
+
+  if (!hasGroupsBlocks) {
+    entries.push({
+      kind: 'checkpoint',
+      title: 'Checkpoint · Grupos singles',
+      primary: 'Pendiente confirmación',
+      secondary: 'Se asignará tras confirmar grupos',
+      tone: 'checkpoint',
+    });
+  }
+
+  if (!hasSinglesBlocks) {
+    entries.push({
+      kind: 'checkpoint',
+      title: 'Fase singles · Por definir',
+      primary: 'Sin bloque asignado aún',
+      secondary: hasGroupsBlocks
+        ? 'Se asignará tras cerrar grupos'
+        : 'Se asignará tras confirmar grupos',
+      tone: 'checkpoint',
+    });
+  }
+
+  if (isReservedDoublesFinalPendingBlock() || tournamentStatus === 'awaiting_doubles_final') {
+    entries.push({
+      kind: 'checkpoint',
+      title: 'Final de dobles · Por definir',
+      primary: 'Pendiente programación',
+      secondary: 'Se programará después de semifinales de singles',
+      tone: 'checkpoint',
+    });
+  }
+
+  if (areReservedSinglesFinalsPendingBlock() || tournamentStatus === 'awaiting_singles_final') {
+    entries.push({
+      kind: 'checkpoint',
+      title: 'Finales de singles · Por definir',
+      primary: 'Pendiente programación',
+      secondary: 'Se asignarán tras resolver final de dobles',
+      tone: 'checkpoint',
+    });
+  }
+
+  return entries;
+}
+
+function buildTimelinePrimaryLabel_(match) {
+  const matchupLabel = buildMatchupLabel(match);
+  const tableNo = String(match.table_no || '').trim();
+
+  if (tableNo) {
+    return `Mesa ${tableNo} · ${matchupLabel}`;
+  }
+
+  return matchupLabel;
 }
 
 function getAdminControlViewModel() {

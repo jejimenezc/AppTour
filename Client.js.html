@@ -563,6 +563,8 @@
       `;
     }
 
+    const timelineHtml = renderMyDayTimeline(vm.timeline || []);
+
     root.innerHTML = `
       <div class="stack">
         <div class="card-soft">
@@ -592,8 +594,43 @@
         </div>
 
         ${matchCardHtml}
+
+        ${timelineHtml}
       </div>
     `;
+  }
+
+  function renderMyDayTimeline(items) {
+    if (!items || items.length === 0) return '';
+
+    const cardsHtml = items.map(function (item) {
+      const toneClass = getMyDayTimelineToneClass(item.tone);
+
+      return `
+        <div class="card-soft" style="border-left: 4px solid ${toneClass};">
+          <div class="stat-label">${escapeHtml(item.title || '')}</div>
+          <div class="stat-value" style="font-size: 17px; margin-top: 8px;">${escapeHtml(item.primary || '')}</div>
+          ${item.secondary ? `<div class="helper" style="margin-top: 6px;">${escapeHtml(item.secondary)}</div>` : ''}
+        </div>
+      `;
+    }).join('');
+
+    return `
+      <div class="stack">
+        <div class="card-soft">
+          <div class="stat-label">Itinerario</div>
+          <div class="helper" style="margin-top: 6px;">Próximos bloques, checkpoints y fases esperadas.</div>
+        </div>
+        ${cardsHtml}
+      </div>
+    `;
+  }
+
+  function getMyDayTimelineToneClass(tone) {
+    if (tone === 'play') return '#0f766e';
+    if (tone === 'referee') return '#2563eb';
+    if (tone === 'checkpoint') return '#7c3aed';
+    return '#94a3b8';
   }
 
   function getMyDayPlayerRoleUi(vm) {
