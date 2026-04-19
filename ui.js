@@ -91,6 +91,7 @@ function getMyDayViewModel(playerId) {
           matchStatus: String(currentMatch.status || ''),
           resultMode: String(currentMatch.result_mode || ''),
           closingState: String(currentMatch.closing_state || ''),
+          isByeAdvance: isByeAdvanceMatch(currentMatch),
           allowedCaptureActions: getAllowedCaptureActions(currentMatch, playerId),
         }
       : null,
@@ -484,6 +485,14 @@ function resolveDoublesTeamLabel(teamId) {
 function isPlayerInMatch(match, playerId) {
   const context = buildPlayerMatchContext(match, playerId);
   return context.isReferee || context.isPlayerA || context.isPlayerB;
+}
+
+function isByeAdvanceMatch(match) {
+  const left = String(match.player_a_id || '').trim();
+  const right = String(match.player_b_id || '').trim();
+  const status = String(match.status || '').trim();
+
+  return (!!left && !right || !left && !!right) && status === 'auto_closed';
 }
 
 function buildPlayerMatchContext(match, playerId) {

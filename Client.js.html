@@ -617,6 +617,14 @@
       return { show: false, label: '', className: '' };
     }
 
+    if (vm.currentMatch.isByeAdvance) {
+      return {
+        show: true,
+        label: 'Libre por bye',
+        className: 'status-closed',
+      };
+    }
+
     const isFinished = isMyDayMatchFinished(vm.currentMatch);
 
     if (isFinished) {
@@ -661,6 +669,13 @@
       return {
         title: 'Sin bloque activo',
         detail: 'No hay actividad programada en este momento.',
+      };
+    }
+
+    if (vm.currentMatch && vm.currentMatch.isByeAdvance) {
+      return {
+        title: 'Pareja libre en este bloque',
+        detail: `Avance por bye · Bloque ${vm.currentBlock.id} · ${vm.currentBlock.phaseLabel}`,
       };
     }
 
@@ -828,6 +843,14 @@
         label: 'Sin accion disponible en este bloque',
         disabled: true,
         helperText: 'No tienes un partido o arbitraje asignado en este bloque.',
+      };
+    }
+
+    if (vm.currentMatch.isByeAdvance) {
+      return {
+        label: 'Libre por bye',
+        disabled: true,
+        helperText: 'Tu pareja no juega este bloque y avanza automaticamente a la siguiente ronda.',
       };
     }
 
