@@ -22,12 +22,12 @@ function areReservedSinglesFinalsPendingBlock() {
  * Devuelve la fecha base para crear un nuevo bloque final:
  * el end_ts del último bloque existente.
  *
- * @returns {Date}
+ * @returns {string}
  */
 function getNextBlockStartBase() {
   const blocks = getBlocksSorted();
   const lastBlock = blocks.length ? blocks[blocks.length - 1] : null;
-  return lastBlock ? parseBlockDate(lastBlock.end_ts) : getTournamentStartDate();
+  return lastBlock ? normalizeDateTimeText(lastBlock.end_ts) : getTournamentStartDate();
 }
 
 /**

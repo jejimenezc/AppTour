@@ -230,7 +230,7 @@ function createInitialGroupBlocksAfterExistingBlocks() {
   const existingBlocks = getBlocksSorted();
   const maxBlockId = existingBlocks.reduce((acc, b) => Math.max(acc, Number(b.block_id || 0)), 0);
   const lastBlock = existingBlocks.length ? existingBlocks[existingBlocks.length - 1] : null;
-  const startBase = lastBlock ? parseBlockDate(lastBlock.end_ts) : getTournamentStartDate();
+  const startBase = lastBlock ? normalizeDateTimeText(lastBlock.end_ts) : getTournamentStartDate();
 
   for (let i = 0; i < 3; i++) {
     const window = buildBlockWindowFromBase(startBase, i * getBlockTotalMinutes());

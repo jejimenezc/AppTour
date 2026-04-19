@@ -179,7 +179,7 @@ function createNextDoublesBlockIfNeeded() {
 
   const blocks = getBlocksSorted();
   const lastBlock = blocks.length ? blocks[blocks.length - 1] : null;
-  const startBase = lastBlock ? parseBlockDate(lastBlock.end_ts) : getTournamentStartDate();
+  const startBase = lastBlock ? normalizeDateTimeText(lastBlock.end_ts) : getTournamentStartDate();
 
   const window = buildBlockWindowFromBase(startBase);
 

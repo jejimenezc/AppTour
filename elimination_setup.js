@@ -157,7 +157,7 @@ function createInitialEliminationBlocks(matchups) {
   const maxBlockId = blocks.reduce((acc, b) => Math.max(acc, Number(b.block_id || 0)), 0);
 
   const lastBlock = blocks.length ? getBlocksSorted()[blocks.length - 1] : null;
-  const startBase = lastBlock ? parseBlockDate(lastBlock.end_ts) : getTournamentStartDate();
+  const startBase = lastBlock ? normalizeDateTimeText(lastBlock.end_ts) : getTournamentStartDate();
 
   const window = buildBlockWindowFromBase(startBase);
 
