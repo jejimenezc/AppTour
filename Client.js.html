@@ -583,8 +583,8 @@
           <div class="row-between">
             <div>
               <div class="stat-label">Jugador</div>
-              <div class="stat-value">${escapeHtml(vm.player.name)}</div>
-              <div class="helper" style="margin-top: 6px;">ID ${escapeHtml(vm.player.id)}</div>
+              <div class="stat-value">${escapeHtml(vm.player.fullName || vm.player.name)}</div>
+              <div class="helper" style="margin-top: 6px;">${escapeHtml(vm.player.name)} · ID ${escapeHtml(vm.player.id)}</div>
             </div>
             ${playerBadgeHtml}
           </div>

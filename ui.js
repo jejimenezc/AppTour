@@ -69,6 +69,7 @@ function getMyDayViewModel(playerId) {
     player: {
       id: player.player_id,
       name: String(player.display_name || player.player_id),
+      fullName: resolvePlayerFullName(player.player_id),
       role: String(player.current_role || 'idle'),
     },
     currentBlock: currentBlock
@@ -123,7 +124,7 @@ function getCheckedInPlayersForSelector() {
     .filter(p => String(p.checked_in) === 'TRUE' || p.checked_in === true)
     .map(p => ({
       id: String(p.player_id),
-      name: String(p.display_name || p.player_id),
+      name: resolvePlayerFullName(p.player_id),
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -544,6 +545,13 @@ function resolvePlayerDisplayName(playerId) {
   const player = getPlayerById(String(playerId || '').trim());
   if (!player) return '';
   return String(player.display_name || player.player_id || '').trim();
+}
+
+function resolvePlayerFullName(playerId) {
+  const player = getPlayerById(String(playerId || '').trim());
+  if (!player) return '';
+
+  return String(player.full_name || player.display_name || player.player_id || '').trim();
 }
 
 function mapMatchStatusLabel(status) {
