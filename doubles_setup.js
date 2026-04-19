@@ -14,6 +14,26 @@ function getDoublesTeams() {
 }
 
 /**
+ * Devuelve un equipo de dobles por team_id.
+ *
+ * @param {string} teamId
+ * @returns {Object|null}
+ */
+function getDoublesTeamById(teamId) {
+  const target = String(teamId || '').trim();
+  if (!target) return null;
+
+  const teams = getDoublesTeams();
+  for (let i = 0; i < teams.length; i++) {
+    if (String(teams[i].team_id || '').trim() === target) {
+      return teams[i];
+    }
+  }
+
+  return null;
+}
+
+/**
  * Obtiene parejas confirmadas únicas.
  * @returns {Object[]}
  */

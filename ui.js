@@ -60,12 +60,10 @@ function getMyDayViewModel(playerId) {
   if (currentBlockId) {
     const matches = getMatchesByBlock(currentBlockId);
 
-    currentMatch = matches.find(match =>
-      String(match.player_a_id) === playerId ||
-      String(match.player_b_id) === playerId ||
-      String(match.referee_player_id) === playerId
-    );
+    currentMatch = matches.find(match => isPlayerInMatch(match, playerId));
   }
+
+  const playerContext = currentMatch ? buildPlayerMatchContext(currentMatch, playerId) : null;
 
   return {
     player: {
@@ -87,9 +85,9 @@ function getMyDayViewModel(playerId) {
           phaseLabel: buildPublicPhaseLabel(currentMatch),
           leftLabel: resolveCompetitorLabel(currentMatch.player_a_id, currentMatch.phase_type),
           rightLabel: resolveCompetitorLabel(currentMatch.player_b_id, currentMatch.phase_type),
-          isReferee: String(currentMatch.referee_player_id) === playerId,
-          isPlayerA: String(currentMatch.player_a_id) === playerId,
-          isPlayerB: String(currentMatch.player_b_id) === playerId,
+          isReferee: playerContext.isReferee,
+          isPlayerA: playerContext.isPlayerA,
+          isPlayerB: playerContext.isPlayerB,
           matchStatus: String(currentMatch.status || ''),
           resultMode: String(currentMatch.result_mode || ''),
           closingState: String(currentMatch.closing_state || ''),
@@ -101,14 +99,12 @@ function getMyDayViewModel(playerId) {
 }
 
 function getAllowedCaptureActions(match, playerId) {
-  const actorId = String(playerId || '').trim();
   const block = getCurrentBlock();
   const blockStatus = String(block && block.status || '').trim();
   const isBlockCapturable = blockStatus === 'live' || blockStatus === 'closing';
-  const isReferee = String(match.referee_player_id || '').trim() === actorId;
-  const isPlayer =
-    String(match.player_a_id || '').trim() === actorId ||
-    String(match.player_b_id || '').trim() === actorId;
+  const playerContext = buildPlayerMatchContext(match, playerId);
+  const isReferee = playerContext.isReferee;
+  const isPlayer = playerContext.isPlayerA || playerContext.isPlayerB;
 
   return {
     canOpen: isBlockCapturable && (isReferee || isPlayer),
@@ -390,10 +386,9 @@ function validateUiMatchSubmissionContext(match, actorPlayerId, actorRole, mode)
   const matchBlockId = String(match.block_id || '').trim();
   const playerId = String(actorPlayerId || '').trim();
   const role = String(actorRole || '').trim();
-  const isReferee = String(match.referee_player_id || '').trim() === playerId;
-  const isPlayer =
-    String(match.player_a_id || '').trim() === playerId ||
-    String(match.player_b_id || '').trim() === playerId;
+  const playerContext = buildPlayerMatchContext(match, playerId);
+  const isReferee = playerContext.isReferee;
+  const isPlayer = playerContext.isPlayerA || playerContext.isPlayerB;
 
   if (!blockId || matchBlockId !== blockId) {
     throw new Error('El partido no pertenece al bloque actual.');
@@ -468,10 +463,58 @@ function resolveCompetitorLabel(id, phaseType) {
   if (!raw) return 'BYE';
 
   if (phaseType === 'doubles') {
-    return raw;
+    return resolveDoublesTeamLabel(raw) || raw;
   }
 
   return resolvePlayerDisplayName(raw) || raw;
+}
+
+function resolveDoublesTeamLabel(teamId) {
+  const team = getDoublesTeamById(teamId);
+  if (!team) return '';
+
+  const player1 = resolvePlayerDisplayName(team.player_1_id);
+  const player2 = resolvePlayerDisplayName(team.player_2_id);
+  const members = [player1, player2].filter(Boolean);
+
+  if (!members.length) return String(team.team_id || '').trim();
+  return members.join(' / ');
+}
+
+function isPlayerInMatch(match, playerId) {
+  const context = buildPlayerMatchContext(match, playerId);
+  return context.isReferee || context.isPlayerA || context.isPlayerB;
+}
+
+function buildPlayerMatchContext(match, playerId) {
+  const actorId = String(playerId || '').trim();
+  const phaseType = String(match.phase_type || '').trim();
+  const isReferee = String(match.referee_player_id || '').trim() === actorId;
+
+  if (phaseType === 'doubles') {
+    const teamA = getDoublesTeamById(match.player_a_id);
+    const teamB = getDoublesTeamById(match.player_b_id);
+
+    return {
+      isReferee: isReferee,
+      isPlayerA: isPlayerInDoublesTeam_(teamA, actorId),
+      isPlayerB: isPlayerInDoublesTeam_(teamB, actorId),
+    };
+  }
+
+  return {
+    isReferee: isReferee,
+    isPlayerA: String(match.player_a_id || '').trim() === actorId,
+    isPlayerB: String(match.player_b_id || '').trim() === actorId,
+  };
+}
+
+function isPlayerInDoublesTeam_(team, playerId) {
+  if (!team) return false;
+  const actorId = String(playerId || '').trim();
+
+  return String(team.player_1_id || '').trim() === actorId ||
+    String(team.player_2_id || '').trim() === actorId;
 }
 
 function resolvePlayerDisplayName(playerId) {
