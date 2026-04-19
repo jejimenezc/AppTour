@@ -35,10 +35,11 @@ function getConfigValue(key) {
  */
 function setConfigValue(key, value, note) {
   const found = findRowById('Config', 'key', key);
+  const storedValue = normalizeConfigStoredValue_(key, value);
 
   if (found) {
     updateRowById('Config', 'key', key, {
-      value,
+      value: storedValue,
       note: typeof note === 'undefined' ? found.rowObject.note : note,
     });
     return;
@@ -46,7 +47,25 @@ function setConfigValue(key, value, note) {
 
   appendRow('Config', {
     key,
-    value,
+    value: storedValue,
     note: typeof note === 'undefined' ? '' : note,
   });
+}
+
+/**
+ * Normaliza valores persistidos en Config.
+ * Las keys temporales deben guardarse como texto para evitar reinterpretacion de Sheets.
+ *
+ * @param {string} key
+ * @param {any} value
+ * @returns {any}
+ */
+function normalizeConfigStoredValue_(key, value) {
+  const configKey = String(key || '').trim();
+
+  if (/_ts$/.test(configKey) && value !== null && typeof value !== 'undefined' && value !== '') {
+    return `'${String(value).trim()}`;
+  }
+
+  return value;
 }

@@ -8,35 +8,34 @@ function tickTournamentClock() {
     return;
   }
 
-  const now = new Date();
-
-  const startTs = parseBlockDate(currentBlock.start_ts);
-  const closeSignalTs = parseBlockDate(currentBlock.close_signal_ts);
-  const hardCloseTs = parseBlockDate(currentBlock.hard_close_ts);
-  const endTs = parseBlockDate(currentBlock.end_ts);
+  const nowText = nowIso();
+  const startTs = normalizeDateTimeText(currentBlock.start_ts);
+  const closeSignalTs = normalizeDateTimeText(currentBlock.close_signal_ts);
+  const hardCloseTs = normalizeDateTimeText(currentBlock.hard_close_ts);
+  const endTs = normalizeDateTimeText(currentBlock.end_ts);
 
   let status = String(currentBlock.status || '').trim();
   const transitions = [];
 
-  if (status === 'scheduled' && startTs && now >= startTs) {
+  if (status === 'scheduled' && startTs && nowText >= startTs) {
     startCurrentBlock(currentBlock.block_id);
     status = 'live';
     transitions.push('live');
   }
 
-  if (status === 'live' && closeSignalTs && now >= closeSignalTs) {
+  if (status === 'live' && closeSignalTs && nowText >= closeSignalTs) {
     enterClosingState(currentBlock.block_id);
     status = 'closing';
     transitions.push('closing');
   }
 
-  if ((status === 'live' || status === 'closing') && hardCloseTs && now >= hardCloseTs) {
+  if ((status === 'live' || status === 'closing') && hardCloseTs && nowText >= hardCloseTs) {
     enterTransitionState(currentBlock.block_id);
     status = 'transition';
     transitions.push('transition');
   }
 
-  if (status === 'transition' && endTs && now >= endTs) {
+  if (status === 'transition' && endTs && nowText >= endTs) {
     finishCurrentBlockAndMoveNext(currentBlock.block_id);
     transitions.push('closed');
     Logger.log(`Bloque ${currentBlock.block_id} => ${transitions.join(' -> ')}`);
@@ -437,15 +436,15 @@ function debugTickConditionsFull() {
   const currentBlock = getCurrentBlock();
   if (!currentBlock) throw new Error('No hay bloque actual.');
 
-  const now = new Date();
-  const startTs = parseBlockDate(currentBlock.start_ts);
-  const closeSignalTs = parseBlockDate(currentBlock.close_signal_ts);
-  const hardCloseTs = parseBlockDate(currentBlock.hard_close_ts);
-  const endTs = parseBlockDate(currentBlock.end_ts);
+  const nowText = nowIso();
+  const startTs = normalizeDateTimeText(currentBlock.start_ts);
+  const closeSignalTs = normalizeDateTimeText(currentBlock.close_signal_ts);
+  const hardCloseTs = normalizeDateTimeText(currentBlock.hard_close_ts);
+  const endTs = normalizeDateTimeText(currentBlock.end_ts);
   const status = String(currentBlock.status || '').trim();
 
   Logger.log('status: %s', status);
-  Logger.log('now: %s', now);
+  Logger.log('now: %s', nowText);
   Logger.log('startTs: %s', startTs);
   Logger.log('closeSignalTs: %s', closeSignalTs);
   Logger.log('hardCloseTs: %s', hardCloseTs);
@@ -453,21 +452,21 @@ function debugTickConditionsFull() {
 
   Logger.log(
     'cond scheduled->live: %s',
-    status === 'scheduled' && startTs && now >= startTs && now < closeSignalTs
+    status === 'scheduled' && startTs && nowText >= startTs && nowText < closeSignalTs
   );
 
   Logger.log(
     'cond live->closing: %s',
-    status === 'live' && closeSignalTs && now >= closeSignalTs && now < hardCloseTs
+    status === 'live' && closeSignalTs && nowText >= closeSignalTs && nowText < hardCloseTs
   );
 
   Logger.log(
     'cond closing/live->transition: %s',
-    (status === 'live' || status === 'closing') && hardCloseTs && now >= hardCloseTs && now < endTs
+    (status === 'live' || status === 'closing') && hardCloseTs && nowText >= hardCloseTs && nowText < endTs
   );
 
   Logger.log(
     'cond transition->closed: %s',
-    status === 'transition' && endTs && now >= endTs
+    status === 'transition' && endTs && nowText >= endTs
   );
 }
