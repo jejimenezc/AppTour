@@ -85,6 +85,7 @@ function getMyDayViewModel(playerId) {
           phaseLabel: buildPublicPhaseLabel(currentMatch),
           leftLabel: resolveCompetitorLabel(currentMatch.player_a_id, currentMatch.phase_type),
           rightLabel: resolveCompetitorLabel(currentMatch.player_b_id, currentMatch.phase_type),
+          matchupLabel: buildMatchupLabel(currentMatch),
           isReferee: playerContext.isReferee,
           isPlayerA: playerContext.isPlayerA,
           isPlayerB: playerContext.isPlayerB,
@@ -429,6 +430,7 @@ function mapMatchForPublicView(match) {
     phaseLabel: buildPublicPhaseLabel(match),
     leftLabel,
     rightLabel,
+    matchupLabel: buildMatchupLabel(match),
     refereeLabel: refereeLabel ? `Árbitro: ${refereeLabel}` : '',
     status: mapMatchStatusLabel(match.status),
     resultMode: String(match.result_mode || ''),
@@ -479,7 +481,19 @@ function resolveDoublesTeamLabel(teamId) {
   const members = [player1, player2].filter(Boolean);
 
   if (!members.length) return String(team.team_id || '').trim();
-  return members.join(' / ');
+  return members.join(' + ');
+}
+
+function buildMatchupLabel(match) {
+  const leftLabel = resolveCompetitorLabel(match.player_a_id, match.phase_type);
+  const rightLabel = resolveCompetitorLabel(match.player_b_id, match.phase_type);
+
+  if (isByeAdvanceMatch(match)) {
+    const advancingLabel = leftLabel !== 'BYE' ? leftLabel : rightLabel;
+    return `${advancingLabel} > ✨ Pasan a la siguiente ronda`;
+  }
+
+  return `${leftLabel} vs ${rightLabel}`;
 }
 
 function isPlayerInMatch(match, playerId) {

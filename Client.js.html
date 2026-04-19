@@ -95,7 +95,7 @@
 
           <div style="margin-top:12px;">
             <div style="font-size:18px; font-weight:bold;">
-              ${escapeHtml(match.leftLabel || '—')} vs ${escapeHtml(match.rightLabel || '—')}
+              ${escapeHtml(match.matchupLabel || `${match.leftLabel || '—'} vs ${match.rightLabel || '—'}`)}
             </div>
             ${match.refereeLabel ? `<div class="helper">${escapeHtml(match.refereeLabel)}</div>` : ''}
           </div>
@@ -534,7 +534,7 @@
           <div style="margin-top: 12px;">
             <div class="stat-label">Compromiso del bloque</div>
             <div class="stat-value" style="font-size: 18px; margin-top: 8px;">
-              ${escapeHtml(matchMeta.leftLabel)} vs ${escapeHtml(matchMeta.rightLabel)}
+              ${escapeHtml(matchMeta.matchupLabel || `${matchMeta.leftLabel} vs ${matchMeta.rightLabel}`)}
             </div>
             <div class="helper" style="margin-top: 6px;">${escapeHtml(nextCommitment.detail)}</div>
           </div>
@@ -928,7 +928,7 @@
           </div>
 
           <div style="margin-bottom:12px; font-weight:bold;">
-            ${escapeHtml(m.leftLabel)} vs ${escapeHtml(m.rightLabel)}
+            ${escapeHtml(m.matchupLabel || `${m.leftLabel} vs ${m.rightLabel}`)}
           </div>
 
           <div class="helper" style="margin-bottom: 16px;">
