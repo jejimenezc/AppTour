@@ -220,17 +220,21 @@ function createNextSinglesBlockIfNeeded() {
     !isSinglesFinalMatch(match)
   );
 
-  nowPending.sort((a, b) => {
-    const x = String(a.bracket_type).localeCompare(String(b.bracket_type));
-    if (x !== 0) return x;
-    return String(a.slot_code).localeCompare(String(b.slot_code || ''));
+  nowPending.forEach(match => {
+    match.block_id = newBlockId;
   });
 
-  nowPending.forEach((match, idx) => {
+  assignTablesAndMatchOrderByBlock(nowPending, function (a, b) {
+    const x = String(a.bracket_type || '').localeCompare(String(b.bracket_type || ''));
+    if (x !== 0) return x;
+    return String(a.slot_code || '').localeCompare(String(b.slot_code || ''));
+  });
+
+  nowPending.forEach(match => {
     updateMatch(match.match_id, {
       block_id: newBlockId,
-      table_no: idx + 1,
-      match_order: idx + 1,
+      table_no: match.table_no,
+      match_order: match.match_order,
     });
   });
 

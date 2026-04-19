@@ -287,13 +287,19 @@ function createInitialDoublesBlock() {
     String(match.block_id || '') === ''
   );
 
-  pendingNow.sort((a, b) => String(a.slot_code || '').localeCompare(String(b.slot_code || '')));
+  pendingNow.forEach(match => {
+    match.block_id = newBlockId;
+  });
 
-  pendingNow.forEach((match, idx) => {
+  assignTablesAndMatchOrderByBlock(pendingNow, function (a, b) {
+    return String(a.slot_code || '').localeCompare(String(b.slot_code || ''));
+  });
+
+  pendingNow.forEach(match => {
     updateMatch(match.match_id, {
       block_id: newBlockId,
-      table_no: idx + 1,
-      match_order: idx + 1,
+      table_no: match.table_no,
+      match_order: match.match_order,
     });
   });
 

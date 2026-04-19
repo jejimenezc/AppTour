@@ -194,11 +194,21 @@ function createInitialEliminationBlocks(matchups) {
     return String(a.slot_code).localeCompare(String(b.slot_code));
   });
 
-  initialSingles.forEach((match, idx) => {
+  initialSingles.forEach(match => {
+    match.block_id = newBlockId;
+  });
+
+  assignTablesAndMatchOrderByBlock(initialSingles, function (a, b) {
+    const x = String(a.bracket_type || '').localeCompare(String(b.bracket_type || ''));
+    if (x !== 0) return x;
+    return String(a.slot_code || '').localeCompare(String(b.slot_code || ''));
+  });
+
+  initialSingles.forEach(match => {
     updateMatch(match.match_id, {
       block_id: newBlockId,
-      table_no: idx + 1,
-      match_order: idx + 1,
+      table_no: match.table_no,
+      match_order: match.match_order,
     });
   });
 }

@@ -354,28 +354,15 @@ function generateGroupStageMatchesAfterExistingMatches() {
  * Asigna mesas/orden a todos los matches de groups existentes.
  */
 function assignTablesAndMatchOrderForAllGroupMatches() {
-  const maxTables = Number(getConfigValue('max_tables') || 12);
   const groupMatches = getMatches().filter(m => String(m.phase_type) === 'groups');
-
-  const byBlock = {};
-  groupMatches.forEach(match => {
-    const blockId = String(match.block_id);
-    if (!byBlock[blockId]) byBlock[blockId] = [];
-    byBlock[blockId].push(match);
+  assignTablesAndMatchOrderByBlock(groupMatches, function (a, b) {
+    return String(a.group_id || '').localeCompare(String(b.group_id || ''));
   });
 
-  Object.keys(byBlock).forEach(blockId => {
-    const rows = byBlock[blockId].sort((a, b) => String(a.group_id).localeCompare(String(b.group_id)));
-
-    if (rows.length > maxTables) {
-      throw new Error(`El bloque ${blockId} tiene ${rows.length} partidos y excede max_tables=${maxTables}`);
-    }
-
-    rows.forEach((match, idx) => {
-      updateMatch(match.match_id, {
-        table_no: idx + 1,
-        match_order: idx + 1,
-      });
+  groupMatches.forEach(match => {
+    updateMatch(match.match_id, {
+      table_no: match.table_no,
+      match_order: match.match_order,
     });
   });
 }

@@ -272,6 +272,34 @@ function generateGroupStageMatches() {
  * @param {Object[]} matches
  */
 function assignTablesAndMatchOrderForGroupMatches(matches) {
+  assignTablesAndMatchOrderByBlock(matches, function (a, b) {
+    return String(a.group_id || '').localeCompare(String(b.group_id || ''));
+  });
+}
+
+/**
+ * Devuelve true si el match requiere mesa fisica.
+ * Los byes y partidos ya auto-cerrados no deben consumir mesa.
+ *
+ * @param {Object} match
+ * @returns {boolean}
+ */
+function isPlayableMatchForTableAssignment(match) {
+  const status = String(match.status || '').trim();
+  const left = String(match.player_a_id || '').trim();
+  const right = String(match.player_b_id || '').trim();
+
+  return !!left && !!right && status !== 'auto_closed';
+}
+
+/**
+ * Asigna mesas y orden solo a partidos jugables, agrupados por bloque.
+ * Los byes quedan sin mesa ni orden.
+ *
+ * @param {Object[]} matches
+ * @param {(function(Object,Object):number)=} compareFn
+ */
+function assignTablesAndMatchOrderByBlock(matches, compareFn) {
   const maxTables = Number(getConfigValue('max_tables') || 12);
   const byBlock = {};
 
@@ -282,17 +310,34 @@ function assignTablesAndMatchOrderForGroupMatches(matches) {
   });
 
   Object.keys(byBlock).forEach(blockId => {
-    const rows = byBlock[blockId].sort((a, b) => String(a.group_id).localeCompare(String(b.group_id)));
+    const rows = byBlock[blockId].slice().sort(compareFn || defaultTableAssignmentCompare_);
+    const playable = rows.filter(isPlayableMatchForTableAssignment);
 
-    if (rows.length > maxTables) {
-      throw new Error(`El bloque ${blockId} tiene ${rows.length} partidos y excede max_tables=${maxTables}`);
+    if (playable.length > maxTables) {
+      throw new Error(`El bloque ${blockId} tiene ${playable.length} partidos jugables y excede max_tables=${maxTables}`);
     }
 
-    rows.forEach((match, idx) => {
+    rows.forEach(match => {
+      match.table_no = '';
+      match.match_order = '';
+    });
+
+    playable.forEach((match, idx) => {
       match.table_no = idx + 1;
       match.match_order = idx + 1;
     });
   });
+}
+
+/**
+ * Comparator por defecto para asignacion de mesas.
+ *
+ * @param {Object} a
+ * @param {Object} b
+ * @returns {number}
+ */
+function defaultTableAssignmentCompare_(a, b) {
+  return String(a.slot_code || '').localeCompare(String(b.slot_code || ''));
 }
 
 /**
