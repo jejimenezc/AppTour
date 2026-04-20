@@ -7,11 +7,28 @@ function getPlayers() {
 }
 
 /**
- * Devuelve jugadores con checked_in verdadero.
+ * Devuelve jugadores activos del torneo.
+ * Equivale a checked_in = TRUE con posible corte por tournament_mode.
  * @returns {Object[]}
  */
 function getCheckedInPlayers() {
-  return getPlayers().filter(player => toBoolean(player.checked_in));
+  return getTournamentPlayers();
+}
+
+/**
+ * Devuelve el corte manual de jugadores activos del torneo.
+ * Si tournament_mode no es un entero positivo, no aplica corte.
+ *
+ * @returns {number}
+ */
+function getTournamentModePlayerLimit() {
+  const rawValue = getConfigValue('tournament_mode');
+  const parsed = Number(rawValue);
+
+  if (!Number.isFinite(parsed)) return 0;
+
+  const normalized = Math.floor(parsed);
+  return normalized > 0 ? normalized : 0;
 }
 
 /**
@@ -67,12 +84,48 @@ function getPlayersSortedBySeed() {
 }
 
 /**
+ * Devuelve los jugadores activos del torneo.
+ * Regla:
+ * - checked_in = TRUE
+ * - ordenados por seed
+ * - si tournament_mode > 0, aplica ese corte
+ *
+ * @returns {Object[]}
+ */
+function getTournamentPlayers() {
+  const checkedInPlayers = getPlayersSortedBySeed()
+    .filter(player => toBoolean(player.checked_in));
+
+  const playerLimit = getTournamentModePlayerLimit();
+  if (!playerLimit) return checkedInPlayers;
+
+  return checkedInPlayers.slice(0, playerLimit);
+}
+
+/**
+ * Devuelve un lookup player_id -> true para jugadores activos del torneo.
+ * @returns {Object<string, boolean>}
+ */
+function getTournamentPlayerIdLookup() {
+  const lookup = {};
+
+  getTournamentPlayers().forEach(player => {
+    lookup[String(player.player_id)] = true;
+  });
+
+  return lookup;
+}
+
+/**
  * Devuelve jugadores por bracket de singles.
  * @param {string} bracketType
  * @returns {Object[]}
  */
 function getPlayersBySinglesBracket(bracketType) {
+  const tournamentPlayerLookup = getTournamentPlayerIdLookup();
+
   return getPlayers().filter(player =>
+    tournamentPlayerLookup[String(player.player_id)] &&
     String(player.singles_bracket || '').trim() === String(bracketType)
   );
 }
@@ -119,29 +172,30 @@ function getValidDoublesStatuses() {
 
 /**
  * Devuelve jugadores base para la ventana de dobles en V2.
- * En el nuevo cronograma, dobles va primero, por lo que depende de checked_in,
- * no de finalistas de singles.
+ * En el nuevo cronograma, dobles va primero y usa el cohort activo del torneo,
+ * no los finalistas de singles.
  *
  * @returns {Object[]}
  */
 function getBaseEligiblePlayersForDoubles() {
-  return getPlayers().filter(player => toBoolean(player.checked_in));
+  return getTournamentPlayers();
 }
 
 /**
  * Abre la ventana de confirmación de dobles:
- * - jugadores checked_in => eligible
- * - jugadores fuera del torneo => blocked
+ * - jugadores activos del torneo => eligible
+ * - jugadores fuera del corte actual => blocked
  *
  * Ya NO bloquea por is_singles_finalist.
  */
 function openDoublesConfirmationWindow() {
+  const tournamentPlayerLookup = getTournamentPlayerIdLookup();
   const players = getPlayers().slice();
 
   players.forEach(player => {
-    const isCheckedIn = toBoolean(player.checked_in);
+    const isEligibleForTournament = !!tournamentPlayerLookup[String(player.player_id)];
 
-    player.doubles_status = isCheckedIn ? 'eligible' : 'blocked';
+    player.doubles_status = isEligibleForTournament ? 'eligible' : 'blocked';
     player.doubles_partner_id = '';
     player.doubles_request_to = '';
     player.doubles_request_from = '';
@@ -188,7 +242,10 @@ function isPlayerAvailableForDoublesWindow(player) {
  * @returns {Object[]}
  */
 function getPlayersWithProposedGroups() {
+  const tournamentPlayerLookup = getTournamentPlayerIdLookup();
+
   return getPlayers().filter(player =>
+    tournamentPlayerLookup[String(player.player_id)] &&
     String(player.proposed_group_id || '').trim() !== ''
   );
 }

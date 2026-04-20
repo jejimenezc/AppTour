@@ -38,7 +38,7 @@ function getDoublesTeamById(teamId) {
  * @returns {Object[]}
  */
 function buildConfirmedDoublesTeams() {
-  const players = getPlayers().filter(p => String(p.doubles_status) === 'partner_confirmed');
+  const players = getTournamentPlayers().filter(p => String(p.doubles_status) === 'partner_confirmed');
   const visited = new Set();
   const teams = [];
   let teamNo = 1;
@@ -92,7 +92,7 @@ function rankPoolPlayersForDoubles(players) {
  * @returns {Object[]}
  */
 function buildPoolDoublesTeams(startingTeamNo) {
-  const poolPlayers = getPlayers().filter(p => String(p.doubles_status) === 'pool');
+  const poolPlayers = getTournamentPlayers().filter(p => String(p.doubles_status) === 'pool');
   const ranked = rankPoolPlayersForDoubles(poolPlayers);
 
   if (ranked.length % 2 !== 0) {

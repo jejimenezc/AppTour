@@ -22,11 +22,11 @@ function openSinglesGroupConfirmationWindow() {
  * Usa jugadores vigentes del torneo.
  *
  * Regla:
- * - checked_in = TRUE
+ * - jugadores activos del torneo
  * - agrupación de 3
  */
 function generateProposedSinglesGroups() {
-  const players = getPlayersSortedBySeed().filter(player => toBoolean(player.checked_in));
+  const players = getTournamentPlayers();
   validatePlayerCountForGroups(players);
 
   const numGroups = players.length / 3;
@@ -110,7 +110,7 @@ function movePlayerToProposedGroup(playerId, targetGroupId, targetSlot) {
  * Valida consistencia del checkpoint de grupos.
  *
  * Reglas:
- * - total de jugadores checked_in múltiplo de 3
+ * - total de jugadores activos del torneo múltiplo de 3
  * - todos tienen proposed_group_id / proposed_group_slot
  * - sin duplicados por slot
  * - cada grupo debe tener exactamente A, B, C
@@ -119,7 +119,7 @@ function movePlayerToProposedGroup(playerId, targetGroupId, targetSlot) {
  */
 function validateSinglesGroupCheckpoint() {
   const errors = [];
-  const players = getPlayers().filter(p => toBoolean(p.checked_in));
+  const players = getTournamentPlayers();
 
   if (players.length % 3 !== 0) {
     errors.push(`La cantidad de jugadores activos (${players.length}) no es múltiplo de 3.`);
@@ -183,7 +183,8 @@ function confirmSinglesGroupsAndStartGroupStage() {
     throw new Error(`No se puede confirmar grupos:\n- ${validation.errors.join('\n- ')}`);
   }
 
-  const players = getPlayers().filter(p => toBoolean(p.checked_in));
+  const tournamentPlayerLookup = getTournamentPlayerIdLookup();
+  const allPlayers = getPlayers();
 
   // limpiar estructuras de groups previas, pero conservar dobles y singles anteriores
   replaceAllRows('Groups', []);
@@ -196,10 +197,12 @@ function confirmSinglesGroupsAndStartGroupStage() {
   const nonGroupBlocks = getBlocks().filter(b => String(b.phase_type) !== 'groups');
   replaceAllRows('Blocks', nonGroupBlocks);
 
-  players.forEach(player => {
+  allPlayers.forEach(player => {
+    const isTournamentPlayer = !!tournamentPlayerLookup[String(player.player_id)];
+
     updatePlayer(player.player_id, {
-      group_id: player.proposed_group_id,
-      group_slot: player.proposed_group_slot,
+      group_id: isTournamentPlayer ? player.proposed_group_id : '',
+      group_slot: isTournamentPlayer ? player.proposed_group_slot : '',
       group_rank: '',
       singles_bracket: '',
       singles_status: 'active',

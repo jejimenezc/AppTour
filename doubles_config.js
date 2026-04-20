@@ -224,7 +224,7 @@ function rejectPartner(targetId) {
  * @returns {Object}
  */
 function getDoublesStatusSummary() {
-  const players = getPlayers();
+  const players = getTournamentPlayers();
 
   const summary = {
     blocked: 0,
@@ -257,7 +257,7 @@ function getDoublesStatusSummary() {
  */
 function validateDoublesCut() {
   const errors = [];
-  const players = getPlayers();
+  const players = getTournamentPlayers();
 
   const pending = players.filter(p => String(p.doubles_status) === 'partner_pending');
   if (pending.length > 0) {

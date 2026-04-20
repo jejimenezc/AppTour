@@ -133,7 +133,8 @@ function getCheckedInPlayersForSelector() {
 
 function getSinglesGroupsViewModel(selectedPlayerId) {
   const tournamentStatus = String(getConfigValue('tournament_status') || '').trim();
-  const checkedInPlayers = getPlayersSortedBySeed().filter(player => toBoolean(player.checked_in));
+  const checkedInPlayers = getTournamentPlayers();
+  const tournamentPlayerLookup = getTournamentPlayerIdLookup();
   const actorId = String(selectedPlayerId || '').trim();
   const actor = actorId ? getPlayerById(actorId) : null;
   const proposedPlayers = checkedInPlayers.filter(player =>
@@ -169,7 +170,7 @@ function getSinglesGroupsViewModel(selectedPlayerId) {
         placementLabel: buildSinglesPlacementLabel_(player),
       }))
       .sort((a, b) => a.name.localeCompare(b.name)),
-    actor: actor && toBoolean(actor.checked_in) ? buildSinglesGroupsActorViewModel_(actor) : null,
+    actor: actor && tournamentPlayerLookup[String(actor.player_id)] ? buildSinglesGroupsActorViewModel_(actor) : null,
     groups: buildSinglesGroupsGrid_(checkedInPlayers, actorId, !groupArtifactsExist && proposedPlayers.length > 0),
     validation: validation,
     statusNote: buildSinglesGroupsStatusNote_(tournamentStatus, checkedInPlayers, proposedPlayers, groupArtifactsExist, validation),
@@ -215,7 +216,8 @@ function applySinglesGroupsActionFromUi(payload) {
 
 function getDoublesConfigViewModel(selectedPlayerId) {
   const tournamentStatus = String(getConfigValue('tournament_status') || '').trim();
-  const players = getPlayers();
+  const players = getTournamentPlayers();
+  const tournamentPlayerLookup = getTournamentPlayerIdLookup();
   const actorId = String(selectedPlayerId || '').trim();
   const actor = actorId ? getPlayerById(actorId) : null;
   const summary = getDoublesStatusSummary();
@@ -236,7 +238,7 @@ function getDoublesConfigViewModel(selectedPlayerId) {
         name: resolvePlayerFullName(player.player_id),
       }))
       .sort((a, b) => a.name.localeCompare(b.name)),
-    actor: actor ? buildDoublesActorViewModel_(actor) : null,
+    actor: actor && tournamentPlayerLookup[String(actor.player_id)] ? buildDoublesActorViewModel_(actor) : null,
     rows: players
       .filter(player => isPlayerAvailableForDoublesWindow(player))
       .map(buildDoublesPlayerRowViewModel_)
@@ -463,7 +465,7 @@ function buildDoublesPlayerRowViewModel_(player) {
 }
 
 function getPartnerCandidateOptions_(playerId) {
-  return getPlayers()
+  return getTournamentPlayers()
     .filter(player => {
       const candidateId = String(player.player_id || '').trim();
       const status = String(player.doubles_status || '').trim();
@@ -800,8 +802,7 @@ function normalizeTournamentStartInput_(rawValue) {
 function seedDemoDoublesConfiguration_() {
   openDoublesConfirmationWindow();
 
-  const eligible = getPlayers().filter(player =>
-    (player.checked_in === true || String(player.checked_in) === 'TRUE') &&
+  const eligible = getBaseEligiblePlayersForDoubles().filter(player =>
     String(player.doubles_status || '') === 'eligible'
   );
 
