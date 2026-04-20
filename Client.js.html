@@ -1,5 +1,7 @@
 <script>
   const PUBLIC_REFRESH_MS = 10000;
+  const MYDAY_REFRESH_MS = 5000;
+  const CLIENT_CLOCK_TICK_MS = 1000;
   const LOCAL_STORAGE_PLAYER_KEY = 'ttm_selected_player_id';
   const LOCAL_STORAGE_GROUPS_PLAYER_KEY = 'ttm_groups_selected_player_id';
   const LOCAL_STORAGE_SCREEN_KEY = 'ttm_active_screen';
@@ -12,6 +14,13 @@
   let currentDoublesVm = null;
   let currentAdminVm = null;
   let adminActionInFlight = false;
+  let myDayRefreshTimer = null;
+  let myDayLoadInFlight = false;
+  let myDayHeartbeatInFlight = false;
+  let myDayLastSuccessAt = null;
+  let myDayLastErrorMessage = '';
+  let myDayClockTimer = null;
+  let myDayClockSnapshot = null;
   let doublesLoadRequestSeq = 0;
   let doublesLoadRequestActive = 0;
   let doublesIsLoading = false;
@@ -22,6 +31,8 @@
     initializeAppScreens();
     loadPublicScreen();
     startPublicAutoRefresh();
+    startMyDayAutoRefresh();
+    startClientClockTicker();
     loadPlayerSelector();
     loadSinglesGroupsConfig();
     loadDoublesConfig();
@@ -71,8 +82,11 @@
     if (nextScreen === 'groups') {
       loadSinglesGroupsConfig({ silent: true });
     }
-    if (nextScreen === 'doubles' && shouldLoadDoublesConfigForCurrentSelection()) {
-      loadDoublesConfig({ silent: true });
+    if (nextScreen === 'myday') {
+      refreshCurrentPlayerExperience({ silent: true });
+    }
+    if (nextScreen === 'doubles') {
+      refreshCurrentPlayerExperience({ silent: true });
     }
     window.scrollTo({ top: 0, behavior: 'auto' });
   }
@@ -110,6 +124,36 @@
     if (publicRefreshTimer) {
       window.clearInterval(publicRefreshTimer);
       publicRefreshTimer = null;
+    }
+  }
+
+  function startMyDayAutoRefresh() {
+    stopMyDayAutoRefresh();
+
+    myDayRefreshTimer = window.setInterval(function () {
+      refreshCurrentPlayerExperience({ silent: true });
+    }, MYDAY_REFRESH_MS);
+  }
+
+  function stopMyDayAutoRefresh() {
+    if (myDayRefreshTimer) {
+      window.clearInterval(myDayRefreshTimer);
+      myDayRefreshTimer = null;
+    }
+  }
+
+  function startClientClockTicker() {
+    stopClientClockTicker();
+
+    myDayClockTimer = window.setInterval(function () {
+      updateMyDayClockHud();
+    }, CLIENT_CLOCK_TICK_MS);
+  }
+
+  function stopClientClockTicker() {
+    if (myDayClockTimer) {
+      window.clearInterval(myDayClockTimer);
+      myDayClockTimer = null;
     }
   }
 
@@ -283,14 +327,19 @@
     const requestId = ++doublesLoadRequestSeq;
     doublesLoadRequestActive = requestId;
 
-    currentDoublesVm = null;
+    const preserveVisibleState = silent && !!currentDoublesVm;
+    if (!preserveVisibleState) {
+      currentDoublesVm = null;
+    }
     doublesIsLoading = true;
     renderMyDayDoublesEntryCard();
-    root.innerHTML = buildDoublesLoadingHtml({
-      silent: silent,
-      title: doublesLoadingTitle,
-      detail: doublesLoadingDetail,
-    });
+    if (!preserveVisibleState) {
+      root.innerHTML = buildDoublesLoadingHtml({
+        silent: silent,
+        title: doublesLoadingTitle,
+        detail: doublesLoadingDetail,
+      });
+    }
     doublesLoadingTitle = '';
     doublesLoadingDetail = '';
 
@@ -1102,6 +1151,7 @@
     adminActionInFlight = false;
     setAdminButtonsDisabled(false);
     renderAdminControl(vm);
+    refreshCurrentPlayerExperience({ silent: true, force: true });
     if (!vm || !vm.lastActionMessage) {
       setAdminActionFeedback(window.__adminFallbackSuccessText || 'Operacion completada.');
     }
@@ -1243,6 +1293,7 @@
     if (!playerId) {
       savePlayerId('');
       currentMyDayVm = null;
+      myDayClockSnapshot = null;
       const root = document.getElementById('myday-content');
       if (root) {
         root.innerHTML = '<div class="empty">Selecciona para ver tu jornada.</div>';
@@ -1253,18 +1304,82 @@
 
     savePlayerId(playerId);
     loadDoublesConfig({ silent: true });
+    loadMyDayForPlayer(playerId, { silent: !!isAutoLoad });
+  }
 
+  function loadMyDayForPlayer(playerId, options) {
+    const opts = options || {};
+    const silent = !!opts.silent;
     const root = document.getElementById('myday-content');
-    root.innerHTML = '<div class="loading">Cargando jornada...</div>';
+    if (!root || !playerId || myDayLoadInFlight) return;
+
+    myDayLoadInFlight = true;
+
+    if (!silent) {
+      root.innerHTML = '<div class="loading">Cargando jornada...</div>';
+    }
 
     google.script.run
-      .withSuccessHandler(renderMyDay)
-      .withFailureHandler(renderMyDayError)
+      .withSuccessHandler(function (vm) {
+        myDayLoadInFlight = false;
+        myDayLastSuccessAt = new Date();
+        myDayLastErrorMessage = '';
+        renderMyDay(vm);
+      })
+      .withFailureHandler(function (error) {
+        myDayLoadInFlight = false;
+        myDayLastErrorMessage = error && error.message ? error.message : String(error || 'Error desconocido');
+
+        if (!silent) {
+          renderMyDayError(error);
+        } else {
+          updateMyDayClockHud();
+        }
+      })
       .getMyDayViewModel(playerId);
+  }
+
+  function refreshCurrentPlayerExperience(options) {
+    const opts = options || {};
+    const playerId = getSavedPlayerId();
+    const activeScreen = getSavedAppScreen();
+
+    if (!playerId) return;
+
+    if (!(activeScreen === 'myday' || activeScreen === 'doubles' || opts.force)) return;
+    if (myDayHeartbeatInFlight) return;
+
+    myDayHeartbeatInFlight = true;
+
+    google.script.run
+      .withSuccessHandler(function () {
+        myDayHeartbeatInFlight = false;
+        loadMyDayForPlayer(playerId, { silent: opts.silent !== false });
+        loadDoublesConfig({ silent: opts.silent !== false });
+      })
+      .withFailureHandler(function () {
+        myDayHeartbeatInFlight = false;
+        loadMyDayForPlayer(playerId, { silent: opts.silent !== false });
+        loadDoublesConfig({ silent: opts.silent !== false });
+      })
+      .syncTournamentClockHeartbeatFromUi();
+  }
+
+  function refreshMyDayNow() {
+    refreshCurrentPlayerExperience({ silent: false });
   }
 
   function renderMyDay(vm) {
     currentMyDayVm = vm;
+    myDayClockSnapshot = {
+      internalNowMs: parseCanonicalDateTime(vm && vm.clock ? vm.clock.internalNowTs : vm.generatedAt),
+      realNowMs: parseCanonicalDateTime(vm && vm.clock ? vm.clock.realNowTs || vm.generatedAt : vm.generatedAt),
+      isRunning: !!(vm && vm.clock && vm.clock.isRunning),
+      health: String(vm && vm.clock && vm.clock.clockHealth || 'ok'),
+      healthMessage: String(vm && vm.clock && vm.clock.clockHealthMessage || ''),
+      clientCapturedAtMs: Date.now(),
+      lastExpectedStatus: '',
+    };
     renderMyDayDoublesEntryCard();
 
     const root = document.getElementById('myday-content');
@@ -1349,6 +1464,28 @@
           </div>
         </div>
 
+        <div class="card-soft myday-clock-card">
+          <div class="row-between" style="align-items: flex-start; gap: 12px;">
+            <div>
+              <div class="stat-label">Reloj interno</div>
+              <div class="myday-clock-value" id="myday-clock-now">--:--:--</div>
+              <div class="helper myday-clock-meta" id="myday-clock-sync">Esperando sincronizacion...</div>
+            </div>
+            <span class="status-pill status-pending" id="myday-clock-status-pill">Sin snapshot</span>
+          </div>
+
+          <div class="myday-clock-grid">
+            <div class="myday-clock-metric">
+              <div class="stat-label" id="myday-clock-next-label">Proximo hito</div>
+              <div class="stat-value" style="font-size: 18px;" id="myday-clock-next-value">-</div>
+            </div>
+            <div class="myday-clock-metric">
+              <div class="stat-label">Estado esperado</div>
+              <div class="stat-value" style="font-size: 18px;" id="myday-clock-expected-status">-</div>
+            </div>
+          </div>
+        </div>
+
         <div class="card-soft">
           <div class="row-between">
             <div>
@@ -1365,6 +1502,147 @@
         ${timelineHtml}
       </div>
     `;
+
+    updateMyDayClockHud(true);
+  }
+
+  function updateMyDayClockHud(forceRefreshCheck) {
+    const clockValueEl = document.getElementById('myday-clock-now');
+    const syncEl = document.getElementById('myday-clock-sync');
+    const nextLabelEl = document.getElementById('myday-clock-next-label');
+    const nextValueEl = document.getElementById('myday-clock-next-value');
+    const expectedStatusEl = document.getElementById('myday-clock-expected-status');
+    const statusPillEl = document.getElementById('myday-clock-status-pill');
+
+    if (!clockValueEl || !syncEl || !nextLabelEl || !nextValueEl || !expectedStatusEl || !statusPillEl) {
+      return;
+    }
+
+    const vm = currentMyDayVm;
+    const snapshot = myDayClockSnapshot;
+    const clock = vm && vm.clock ? vm.clock : null;
+    const clockHealth = String(clock && clock.clockHealth || snapshot && snapshot.health || 'ok');
+    const clockHealthMessage = String(clock && clock.clockHealthMessage || snapshot && snapshot.healthMessage || '');
+
+    if (!vm || !snapshot || (!snapshot.internalNowMs && clockHealth !== 'missing_start_ts')) {
+      clockValueEl.textContent = '--:--:--';
+      syncEl.textContent = 'Selecciona un jugador para ver su reloj interno.';
+      nextLabelEl.textContent = 'Proximo hito';
+      nextValueEl.textContent = '-';
+      expectedStatusEl.textContent = '-';
+      statusPillEl.textContent = 'Sin snapshot';
+      statusPillEl.className = 'status-pill status-pending';
+      return;
+    }
+
+    if (clockHealth === 'missing_start_ts' || clockHealth === 'invalid_anchor') {
+      clockValueEl.textContent = '--:--:--';
+      nextLabelEl.textContent = 'Proximo hito';
+      nextValueEl.textContent = 'Configura inicio';
+      expectedStatusEl.textContent = 'Sin referencia';
+
+      const syncParts = [];
+      if (snapshot.realNowMs) {
+        syncParts.push(`hora real ${formatClockStamp(snapshot.realNowMs)}`);
+      }
+      if (myDayLastSuccessAt) {
+        syncParts.push(`actualizado hace ${formatRelativeSeconds(Date.now() - myDayLastSuccessAt.getTime())}`);
+      }
+      if (clockHealthMessage) {
+        syncParts.push(clockHealthMessage);
+      }
+      if (myDayLastErrorMessage) {
+        syncParts.push(`error: ${myDayLastErrorMessage}`);
+      }
+
+      syncEl.textContent = syncParts.join(' | ') || 'Falta configurar tournament_start_ts.';
+      statusPillEl.textContent = 'Config invalida';
+      statusPillEl.className = 'status-pill status-closed';
+      return;
+    }
+
+    const elapsedClientMs = Date.now() - snapshot.clientCapturedAtMs;
+    const internalNowMs = snapshot.internalNowMs + (snapshot.isRunning ? elapsedClientMs : 0);
+    const tournamentStartMs = parseCanonicalDateTime(vm.clock && vm.clock.tournamentStartTs);
+    const realNowMs = snapshot.realNowMs ? snapshot.realNowMs + elapsedClientMs : Date.now();
+    const currentBlock = vm.currentBlock || null;
+    const beforeTournamentStart = !!tournamentStartMs && internalNowMs < tournamentStartMs;
+    const expectedStatus = getExpectedBlockStatus(currentBlock, internalNowMs);
+    const nextMilestone = getNextBlockMilestone(currentBlock, internalNowMs);
+    const snapshotStatus = currentBlock ? String(currentBlock.status || '').trim() : '';
+    const drifted = !!currentBlock && expectedStatus && snapshotStatus && expectedStatus !== snapshotStatus;
+    const lastRunAt = parseCanonicalDateTime(clock && clock.triggerLastRunAt);
+
+    if (clockHealth === 'missing_start_ts') {
+      clockValueEl.textContent = '--:--:--';
+    } else {
+      clockValueEl.textContent = tournamentStartMs
+        ? beforeTournamentStart
+          ? formatCountdown(tournamentStartMs - internalNowMs)
+          : formatElapsedClock(internalNowMs - tournamentStartMs)
+        : '--:--:--';
+    }
+    nextLabelEl.textContent = nextMilestone.label;
+    nextValueEl.textContent = nextMilestone.value;
+    expectedStatusEl.textContent = expectedStatus ? formatTournamentStateLabel({ status: expectedStatus }) : 'Sin bloque';
+
+    if (clockHealth === 'missing_start_ts') {
+      statusPillEl.textContent = 'Config invalida';
+      statusPillEl.className = 'status-pill status-closed';
+    } else if (clockHealth === 'autocorrected') {
+      statusPillEl.textContent = 'Autocorregido';
+      statusPillEl.className = 'status-pill status-pending';
+    } else if (beforeTournamentStart) {
+      statusPillEl.textContent = 'Aun no inicia';
+      statusPillEl.className = 'status-pill status-pending';
+    } else if (!snapshot.isRunning) {
+      statusPillEl.textContent = 'Pausado';
+      statusPillEl.className = 'status-pill status-closed';
+    } else if (drifted) {
+      statusPillEl.textContent = 'Esperando refresh';
+      statusPillEl.className = 'status-pill status-pending';
+    } else {
+      statusPillEl.textContent = expectedStatus ? 'Sincronizado' : 'Sin bloque';
+      statusPillEl.className = expectedStatus ? 'status-pill status-done' : 'status-pill status-closed';
+    }
+
+    const syncParts = [];
+    if (internalNowMs) {
+      syncParts.push(`hora interna ${formatClockStamp(internalNowMs)}`);
+    }
+    if (realNowMs) {
+      syncParts.push(`hora real ${formatClockStamp(realNowMs)}`);
+    }
+    if (tournamentStartMs) {
+      syncParts.push(`inicio torneo ${formatClockStamp(tournamentStartMs)}`);
+    }
+    if (myDayLastSuccessAt) {
+      syncParts.push(`actualizado hace ${formatRelativeSeconds(Date.now() - myDayLastSuccessAt.getTime())}`);
+    }
+    if (lastRunAt) {
+      syncParts.push(`ultimo tick ${formatClockTime(lastRunAt)}`);
+    }
+    if (!snapshot.isRunning) {
+      syncParts.push('reloj pausado');
+    }
+    if (clockHealthMessage) {
+      syncParts.push(clockHealthMessage);
+    }
+    if (myDayLastErrorMessage) {
+      syncParts.push(`error: ${myDayLastErrorMessage}`);
+    } else if (drifted) {
+      syncParts.push('El reloj interno ya cruzo un hito; refrescando snapshot...');
+    }
+
+    syncEl.textContent = syncParts.join(' · ');
+
+    if (currentBlock && (forceRefreshCheck || expectedStatus !== snapshot.lastExpectedStatus)) {
+      snapshot.lastExpectedStatus = expectedStatus;
+
+      if (!forceRefreshCheck && drifted) {
+        refreshCurrentPlayerExperience({ silent: true });
+      }
+    }
   }
 
   function handleTouchCardKeydown(event) {
@@ -1634,6 +1912,55 @@
     if (status === 'closed') return 'Cerrado';
 
     return status || 'Bloque';
+  }
+
+  function getExpectedBlockStatus(currentBlock, internalNowMs) {
+    if (!currentBlock) return '';
+
+    const startMs = parseCanonicalDateTime(currentBlock.startTs);
+    const closeMs = parseCanonicalDateTime(currentBlock.closeSignalTs);
+    const hardMs = parseCanonicalDateTime(currentBlock.hardCloseTs);
+    const endMs = parseCanonicalDateTime(currentBlock.endTs);
+
+    if (!startMs || internalNowMs < startMs) return 'scheduled';
+    if (closeMs && internalNowMs < closeMs) return 'live';
+    if (hardMs && internalNowMs < hardMs) return 'closing';
+    if (endMs && internalNowMs < endMs) return 'transition';
+    if (endMs && internalNowMs >= endMs) return 'closed';
+
+    return String(currentBlock.status || '').trim();
+  }
+
+  function getNextBlockMilestone(currentBlock, internalNowMs) {
+    if (!currentBlock) {
+      return {
+        label: 'Proximo hito',
+        value: 'Sin bloque activo',
+      };
+    }
+
+    const milestones = [
+      { key: 'start', label: 'Inicio', at: parseCanonicalDateTime(currentBlock.startTs) },
+      { key: 'close', label: 'Cierre', at: parseCanonicalDateTime(currentBlock.closeSignalTs) },
+      { key: 'transition', label: 'Transicion', at: parseCanonicalDateTime(currentBlock.hardCloseTs) },
+      { key: 'fin', label: 'Fin de bloque', at: parseCanonicalDateTime(currentBlock.endTs) },
+    ].filter(function (item) {
+      return !!item.at;
+    });
+
+    for (let i = 0; i < milestones.length; i++) {
+      if (internalNowMs < milestones[i].at) {
+        return {
+          label: milestones[i].label,
+          value: formatCountdown(milestones[i].at - internalNowMs),
+        };
+      }
+    }
+
+    return {
+      label: 'Proximo hito',
+      value: 'Esperando refresh del siguiente bloque',
+    };
   }
 
   function captureButtonClass(isSecondary) {
@@ -1914,6 +2241,68 @@
   function renderMyDayError(error) {
     document.getElementById('myday-content').innerHTML =
       '<div class="error">' + escapeHtml(error.message || String(error)) + '</div>';
+  }
+
+  function parseCanonicalDateTime(value) {
+    const text = String(value || '').trim();
+    if (!text) return 0;
+
+    const match = text.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/);
+    if (!match) return 0;
+
+    return new Date(
+      Number(match[1]),
+      Number(match[2]) - 1,
+      Number(match[3]),
+      Number(match[4]),
+      Number(match[5]),
+      Number(match[6])
+    ).getTime();
+  }
+
+  function formatElapsedClock(milliseconds) {
+    const safe = Math.max(0, Number(milliseconds) || 0);
+    const totalSeconds = Math.floor(safe / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+
+    return [
+      String(hours).padStart(2, '0'),
+      String(minutes).padStart(2, '0'),
+      String(seconds).padStart(2, '0'),
+    ].join(':');
+  }
+
+  function formatCountdown(milliseconds) {
+    return formatElapsedClock(milliseconds);
+  }
+
+  function formatRelativeSeconds(milliseconds) {
+    const seconds = Math.max(0, Math.floor((Number(milliseconds) || 0) / 1000));
+    return seconds + ' s';
+  }
+
+  function formatClockTime(milliseconds) {
+    if (!milliseconds) return '--:--:--';
+
+    const date = new Date(milliseconds);
+    return [
+      String(date.getHours()).padStart(2, '0'),
+      String(date.getMinutes()).padStart(2, '0'),
+      String(date.getSeconds()).padStart(2, '0'),
+    ].join(':');
+  }
+
+  function formatClockStamp(milliseconds) {
+    if (!milliseconds) return '--';
+
+    const date = new Date(milliseconds);
+    const yyyy = String(date.getFullYear());
+    const mm = String(date.getMonth() + 1).padStart(2, '0');
+    const dd = String(date.getDate()).padStart(2, '0');
+
+    return `${yyyy}-${mm}-${dd} ${formatClockTime(milliseconds)}`;
   }
 
   function savePlayerId(playerId) {

@@ -47,6 +47,20 @@ function getPublicViewModel() {
   };
 }
 
+function buildTournamentClockPayload_() {
+  const clockState = getTournamentClockState_();
+
+  return {
+    tournamentStartTs: normalizeDateTimeText(clockState.startTs),
+    internalNowTs: normalizeDateTimeText(clockState.internalNowTs),
+    realNowTs: normalizeDateTimeText(clockState.realNowTs || nowIso()),
+    isRunning: !!clockState.isRunning,
+    triggerLastRunAt: normalizeDateTimeText(getConfigValue('clock_trigger_last_run_at')),
+    clockHealth: String(clockState.health || 'ok'),
+    clockHealthMessage: String(clockState.healthMessage || ''),
+  };
+}
+
 function getMyDayViewModel(playerId) {
   const player = getPlayerById(playerId);
   if (!player) {
@@ -78,6 +92,10 @@ function getMyDayViewModel(playerId) {
           id: currentBlock.block_id,
           phaseLabel: currentBlock.phase_label,
           status: currentBlock.status,
+          startTs: serializeDateForClient(currentBlock.start_ts),
+          closeSignalTs: serializeDateForClient(currentBlock.close_signal_ts),
+          hardCloseTs: serializeDateForClient(currentBlock.hard_close_ts),
+          endTs: serializeDateForClient(currentBlock.end_ts),
         }
       : null,
     currentMatch: currentMatch
@@ -98,6 +116,7 @@ function getMyDayViewModel(playerId) {
           allowedCaptureActions: getAllowedCaptureActions(currentMatch, playerId),
         }
       : null,
+    clock: buildTournamentClockPayload_(),
     timeline: buildMyDayTimeline(playerId, currentBlock),
     generatedAt: nowIso(),
   };
@@ -640,6 +659,7 @@ function buildTimelinePrimaryLabel_(match) {
 function getAdminControlViewModel() {
   const currentBlock = getCurrentBlock();
   const triggerStatus = getTournamentClockTriggerStatus();
+  const clock = buildTournamentClockPayload_();
   const doublesSummary = getDoublesStatusSummary();
   const matches = getRows('Matches');
   const tournamentStatus = String(getConfigValue('tournament_status') || '').trim();
@@ -649,7 +669,10 @@ function getAdminControlViewModel() {
 
   return {
     tournamentStatus: tournamentStatus,
-    tournamentStartTs: String(getConfigValue('tournament_start_ts') || '').trim(),
+    tournamentStartTs: clock.tournamentStartTs,
+    internalClockNowTs: clock.internalNowTs,
+    clockHealth: clock.clockHealth,
+    clockHealthMessage: clock.clockHealthMessage,
     timeZone: getTimeZoneDiagnostics(),
     currentBlock: currentBlock
       ? {
@@ -694,12 +717,14 @@ function getAdminControlViewModel() {
 function setTournamentStartTsFromUi(rawValue) {
   const normalized = normalizeTournamentStartInput_(rawValue);
   setConfigValue('tournament_start_ts', normalized, 'Hora base del torneo');
+  resetTournamentInternalClock(normalized);
   return getAdminControlViewModel();
 }
 
 function setTournamentStartNowFromUi() {
   const value = nowIso();
   setConfigValue('tournament_start_ts', value, 'Hora base del torneo');
+  resetTournamentInternalClock(value);
   return getAdminControlViewModel();
 }
 
@@ -728,15 +753,33 @@ function setupDoublesStageFromUi() {
 }
 
 function runTournamentClockNowFromUi() {
-  tickTournamentClock();
+  runTournamentClockManualTick();
   const vm = getAdminControlViewModel();
   vm.lastActionMessage = 'Tick ejecutado manualmente.';
   return vm;
 }
 
+function syncTournamentClockHeartbeatFromUi() {
+  runTournamentClockTick();
+  return buildTournamentClockPayload_();
+}
+
 function setClockTriggerEnabledFromUi(enabled) {
   const nextValue = !!enabled;
-  setConfigValue('clock_trigger_enabled', nextValue, 'Habilita el trigger automatico del reloj');
+
+  if (nextValue) {
+    resumeTournamentInternalClock();
+    const triggerStatus = getTournamentClockTriggerStatus();
+    if (Number(triggerStatus.triggerCount || 0) === 0) {
+      installTournamentClockTrigger();
+    } else {
+      setConfigValue('clock_trigger_enabled', true, 'Habilita el trigger automatico del reloj');
+    }
+  } else {
+    pauseTournamentInternalClock();
+    removeTournamentClockTriggers();
+  }
+
   const vm = getAdminControlViewModel();
   vm.lastActionMessage = nextValue ? 'Reloj automatico reanudado.' : 'Reloj automatico pausado.';
   return vm;
@@ -763,6 +806,7 @@ function scheduleDoublesFinalFromUi() {
 function startDemoTournamentNowFromUi() {
   const startTs = nowIso();
   setConfigValue('tournament_start_ts', startTs, 'Hora base del torneo');
+  resetTournamentInternalClock(startTs);
   initializeTournamentFlowV2();
   seedDemoDoublesConfiguration_();
 
