@@ -307,8 +307,11 @@ function buildDoublesActorViewModel_(player) {
     status: status,
     statusLabel: getDoublesStatusLabel_(status),
     partnerLabel: partnerId ? resolvePlayerFullName(partnerId) : '',
+    partnerId: partnerId,
     requestToLabel: requestTo ? resolvePlayerFullName(requestTo) : '',
+    requestToId: requestTo,
     requestFromLabel: requestFrom ? resolvePlayerFullName(requestFrom) : '',
+    requestFromId: requestFrom,
     partnerOptions: getPartnerCandidateOptions_(playerId),
     availableActions: {
       canChoosePartner: status === 'eligible' || status === 'pool' || (status === 'partner_pending' && !!requestTo),
@@ -479,7 +482,7 @@ function getPartnerCandidateOptions_(playerId) {
 function getDoublesStatusLabel_(status) {
   if (status === 'eligible') return 'Disponible';
   if (status === 'pool') return 'Pool';
-  if (status === 'partner_pending') return 'Pendiente';
+  if (status === 'partner_pending') return 'Esperando confirmacion';
   if (status === 'partner_confirmed') return 'Confirmado';
   if (status === 'opted_out') return 'Declino';
   if (status === 'blocked') return 'Bloqueado';
