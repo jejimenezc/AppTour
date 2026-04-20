@@ -69,7 +69,7 @@
     if (nextScreen === 'groups') {
       loadSinglesGroupsConfig({ silent: true });
     }
-    if (nextScreen === 'doubles') {
+    if (nextScreen === 'doubles' && shouldLoadDoublesConfigForCurrentSelection()) {
       loadDoublesConfig({ silent: true });
     }
     window.scrollTo({ top: 0, behavior: 'auto' });
@@ -80,6 +80,18 @@
     if (value === 'doubles') return 'myday';
     if (value === 'groups') return 'admin';
     return value || 'public';
+  }
+
+  function shouldLoadDoublesConfigForCurrentSelection() {
+    const playerId = getSavedPlayerId();
+    if (!playerId) return false;
+    if (doublesIsLoading) return false;
+
+    const actorId = currentDoublesVm && currentDoublesVm.actor
+      ? String(currentDoublesVm.actor.id || '').trim()
+      : '';
+
+    return actorId !== playerId;
   }
 
   function startPublicAutoRefresh() {
