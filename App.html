@@ -14,6 +14,9 @@
         <button class="app-tab" type="button" data-screen-tab="myday" aria-selected="false" onclick="setActiveAppScreen('myday')">
           Mi jornada
         </button>
+        <button class="app-tab" type="button" data-screen-tab="groups" aria-selected="false" onclick="setActiveAppScreen('groups')">
+          Grupos
+        </button>
         <button class="app-tab" type="button" data-screen-tab="doubles" aria-selected="false" onclick="setActiveAppScreen('doubles')">
           Dobles
         </button>
@@ -111,6 +114,22 @@
 
         <div id="doubles-config-content">
           <div class="loading">Cargando configuracion de dobles...</div>
+        </div>
+      </section>
+    </div>
+
+    <div class="app-screen" data-screen-panel="groups">
+      <section class="card">
+        <div class="row-between" style="margin-bottom: 12px; align-items: flex-end;">
+          <div>
+            <p class="subtitle">Checkpoint operativo</p>
+            <h2 class="section-title" style="margin: 0;">Grupos singles</h2>
+            <p class="helper" style="margin-top: 6px;">Edita la propuesta base, revisa validaciones y confirma los grupos antes de iniciar la fase.</p>
+          </div>
+        </div>
+
+        <div id="singles-groups-content">
+          <div class="loading">Cargando propuesta de grupos...</div>
         </div>
       </section>
     </div>

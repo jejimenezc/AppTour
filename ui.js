@@ -131,6 +131,88 @@ function getCheckedInPlayersForSelector() {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+function getSinglesGroupsViewModel(selectedPlayerId) {
+  const tournamentStatus = String(getConfigValue('tournament_status') || '').trim();
+  const checkedInPlayers = getPlayersSortedBySeed().filter(player => toBoolean(player.checked_in));
+  const actorId = String(selectedPlayerId || '').trim();
+  const actor = actorId ? getPlayerById(actorId) : null;
+  const proposedPlayers = checkedInPlayers.filter(player =>
+    String(player.proposed_group_id || '').trim() !== ''
+  );
+  const groupArtifactsExist = hasConfirmedSinglesGroupsArtifacts_();
+  const validation = proposedPlayers.length
+    ? validateSinglesGroupCheckpoint()
+    : { ok: false, errors: [] };
+
+  return {
+    tournamentStatus,
+    summary: {
+      checkedIn: checkedInPlayers.length,
+      proposedGroups: buildProposedGroupIds_(checkedInPlayers).length,
+      assigned: proposedPlayers.length,
+      confirmedGroups: buildConfirmedGroupIds_().length,
+      issues: validation.errors.length,
+    },
+    capabilities: {
+      canPrepareWindow: !groupArtifactsExist && checkedInPlayers.length > 0 && proposedPlayers.length === 0,
+      canRecalculate: !groupArtifactsExist && proposedPlayers.length > 0,
+      canMovePlayers: !groupArtifactsExist && proposedPlayers.length > 0,
+      canConfirm: !groupArtifactsExist &&
+        tournamentStatus === 'awaiting_singles_group_confirmation' &&
+        proposedPlayers.length === checkedInPlayers.length &&
+        validation.ok,
+    },
+    playerOptions: checkedInPlayers
+      .map(player => ({
+        id: String(player.player_id || ''),
+        name: resolvePlayerFullName(player.player_id),
+        placementLabel: buildSinglesPlacementLabel_(player),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    actor: actor && toBoolean(actor.checked_in) ? buildSinglesGroupsActorViewModel_(actor) : null,
+    groups: buildSinglesGroupsGrid_(checkedInPlayers, actorId, !groupArtifactsExist && proposedPlayers.length > 0),
+    validation: validation,
+    statusNote: buildSinglesGroupsStatusNote_(tournamentStatus, checkedInPlayers, proposedPlayers, groupArtifactsExist, validation),
+    generatedAt: nowIso(),
+  };
+}
+
+function applySinglesGroupsActionFromUi(payload) {
+  const data = payload || {};
+  const action = String(data.action || '').trim();
+  const selectedPlayerId = String(data.selectedPlayerId || data.playerId || '').trim();
+  const playerId = String(data.playerId || '').trim();
+  const targetGroupId = String(data.targetGroupId || '').trim();
+  const targetSlot = String(data.targetSlot || '').trim();
+
+  if (!action) throw new Error('action requerida');
+
+  if (action === 'open_window') {
+    openSinglesGroupConfirmationWindow();
+    return getSinglesGroupsViewModel(selectedPlayerId);
+  }
+
+  if (action === 'recalculate') {
+    recalculateProposedSinglesGroups();
+    return getSinglesGroupsViewModel(selectedPlayerId);
+  }
+
+  if (action === 'move_player') {
+    if (!playerId || !targetGroupId || !targetSlot) {
+      throw new Error('Debes elegir jugador y destino.');
+    }
+    movePlayerToProposedGroup(playerId, targetGroupId, targetSlot);
+    return getSinglesGroupsViewModel(selectedPlayerId || playerId);
+  }
+
+  if (action === 'confirm_groups') {
+    confirmSinglesGroupsAndStartGroupStage();
+    return getSinglesGroupsViewModel(selectedPlayerId);
+  }
+
+  throw new Error(`Accion de grupos no soportada: ${action}`);
+}
+
 function getDoublesConfigViewModel(selectedPlayerId) {
   const tournamentStatus = String(getConfigValue('tournament_status') || '').trim();
   const players = getPlayers();
@@ -237,6 +319,120 @@ function buildDoublesActorViewModel_(player) {
       canResetToEligible: status === 'pool' || status === 'opted_out' || (status === 'partner_pending' && !!requestTo),
     },
   };
+}
+
+function hasConfirmedSinglesGroupsArtifacts_() {
+  const players = getPlayers().some(player => String(player.group_id || '').trim() !== '');
+  const groups = getRows('Groups').length > 0;
+  const groupMatches = getRows('Matches').some(match => String(match.phase_type || '').trim() === 'groups');
+  const groupBlocks = getRows('Blocks').some(block => String(block.phase_type || '').trim() === 'groups');
+
+  return players || groups || groupMatches || groupBlocks;
+}
+
+function buildProposedGroupIds_(players) {
+  const seen = {};
+
+  players.forEach(player => {
+    const groupId = String(player.proposed_group_id || '').trim();
+    if (groupId) seen[groupId] = true;
+  });
+
+  return Object.keys(seen).sort();
+}
+
+function buildConfirmedGroupIds_() {
+  const seen = {};
+
+  getRows('Groups').forEach(row => {
+    const groupId = String(row.group_id || '').trim();
+    if (groupId) seen[groupId] = true;
+  });
+
+  return Object.keys(seen).sort();
+}
+
+function buildSinglesPlacementLabel_(player) {
+  const proposedGroupId = String(player.proposed_group_id || '').trim();
+  const proposedSlot = String(player.proposed_group_slot || '').trim().toUpperCase();
+  if (proposedGroupId && proposedSlot) {
+    return `${proposedGroupId} ${proposedSlot}`;
+  }
+
+  const groupId = String(player.group_id || '').trim();
+  const groupSlot = String(player.group_slot || '').trim().toUpperCase();
+  if (groupId && groupSlot) {
+    return `${groupId} ${groupSlot} confirmado`;
+  }
+
+  return 'Sin propuesta';
+}
+
+function buildSinglesGroupsActorViewModel_(player) {
+  return {
+    id: String(player.player_id || '').trim(),
+    name: resolvePlayerFullName(player.player_id),
+    seed: String(player.seed || '').trim(),
+    placementLabel: buildSinglesPlacementLabel_(player),
+    proposedGroupId: String(player.proposed_group_id || '').trim(),
+    proposedSlot: String(player.proposed_group_slot || '').trim().toUpperCase(),
+  };
+}
+
+function buildSinglesGroupsGrid_(players, actorId, canMovePlayers) {
+  const grouped = {};
+
+  players.forEach(player => {
+    const proposedGroupId = String(player.proposed_group_id || '').trim();
+    const groupId = proposedGroupId || String(player.group_id || '').trim();
+    const slot = String(player.proposed_group_slot || player.group_slot || '').trim().toUpperCase();
+
+    if (!groupId) return;
+    if (!grouped[groupId]) grouped[groupId] = {};
+    grouped[groupId][slot] = player;
+  });
+
+  return Object.keys(grouped)
+    .sort()
+    .map(groupId => ({
+      groupId,
+      slots: ['A', 'B', 'C'].map(slot => {
+        const player = grouped[groupId][slot] || null;
+        return {
+          slot,
+          playerId: player ? String(player.player_id || '').trim() : '',
+          playerName: player ? resolvePlayerFullName(player.player_id) : '',
+          seed: player ? String(player.seed || '').trim() : '',
+          detail: player ? `ID ${player.player_id}` : 'Sin jugador asignado',
+          isActorHere: !!player && String(player.player_id || '').trim() === actorId,
+          canMoveHere: canMovePlayers && !!actorId && (!player || String(player.player_id || '').trim() !== actorId),
+        };
+      }),
+    }));
+}
+
+function buildSinglesGroupsStatusNote_(tournamentStatus, checkedInPlayers, proposedPlayers, groupArtifactsExist, validation) {
+  if (groupArtifactsExist) {
+    return 'La fase de grupos ya fue confirmada. Esta pantalla queda en modo lectura para no reabrir el checkpoint.';
+  }
+
+  if (!checkedInPlayers.length) {
+    return 'No hay jugadores checked-in para proponer grupos.';
+  }
+
+  if (!proposedPlayers.length) {
+    return 'Genera la propuesta inicial para editar grupos de singles antes de confirmarlos.';
+  }
+
+  if (tournamentStatus !== 'awaiting_singles_group_confirmation') {
+    return 'La propuesta existe, pero el torneo aun no esta en la ventana formal de confirmacion de grupos.';
+  }
+
+  if (!validation.ok) {
+    return 'La propuesta tiene observaciones. Corrigelas antes de confirmar.';
+  }
+
+  return 'Checkpoint listo. Puedes revisar cambios finos y confirmar los grupos para iniciar la fase.';
 }
 
 function buildDoublesPlayerRowViewModel_(player) {

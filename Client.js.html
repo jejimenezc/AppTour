@@ -1,12 +1,14 @@
 <script>
   const PUBLIC_REFRESH_MS = 10000;
   const LOCAL_STORAGE_PLAYER_KEY = 'ttm_selected_player_id';
+  const LOCAL_STORAGE_GROUPS_PLAYER_KEY = 'ttm_groups_selected_player_id';
   const LOCAL_STORAGE_SCREEN_KEY = 'ttm_active_screen';
 
   let publicRefreshTimer = null;
   let publicLoadInFlight = false;
   let publicLastSuccessAt = null;
   let currentMyDayVm = null;
+  let currentSinglesGroupsVm = null;
   let currentDoublesVm = null;
   let currentAdminVm = null;
   let adminActionInFlight = false;
@@ -16,6 +18,7 @@
     loadPublicScreen();
     startPublicAutoRefresh();
     loadPlayerSelector();
+    loadSinglesGroupsConfig();
     loadDoublesConfig();
     loadAdminControl();
   });
@@ -59,6 +62,9 @@
     });
 
     saveAppScreen(nextScreen);
+    if (nextScreen === 'groups') {
+      loadSinglesGroupsConfig({ silent: true });
+    }
     if (nextScreen === 'doubles') {
       loadDoublesConfig({ silent: true });
     }
@@ -258,6 +264,223 @@
       .withSuccessHandler(renderDoublesConfig)
       .withFailureHandler(renderDoublesConfigError)
       .getDoublesConfigViewModel(getSavedPlayerId());
+  }
+
+  function loadSinglesGroupsConfig(options) {
+    const opts = options || {};
+    const silent = !!opts.silent;
+    const root = document.getElementById('singles-groups-content');
+    if (!root) return;
+
+    if (!silent) {
+      root.innerHTML = '<div class="loading">Cargando propuesta de grupos...</div>';
+    }
+
+    google.script.run
+      .withSuccessHandler(renderSinglesGroupsConfig)
+      .withFailureHandler(renderSinglesGroupsConfigError)
+      .getSinglesGroupsViewModel(getSavedGroupsPlayerId());
+  }
+
+  function renderSinglesGroupsConfig(vm) {
+    currentSinglesGroupsVm = vm;
+
+    const root = document.getElementById('singles-groups-content');
+    if (!root) return;
+
+    const actor = vm.actor || null;
+    const capabilities = vm.capabilities || {};
+    const validation = vm.validation || { ok: false, errors: [] };
+    const groups = vm.groups || [];
+
+    const actionButtons = [
+      capabilities.canPrepareWindow
+        ? '<button class="admin-action-button" onclick="submitSinglesGroupsAction(\'open_window\')">Preparar grupos</button>'
+        : '',
+      capabilities.canRecalculate
+        ? '<button class="admin-action-button admin-action-button-secondary" onclick="submitSinglesGroupsAction(\'recalculate\')">Recalcular propuesta</button>'
+        : '',
+      capabilities.canConfirm
+        ? '<button class="admin-action-button" onclick="submitSinglesGroupsAction(\'confirm_groups\')">Confirmar grupos</button>'
+        : ''
+    ].filter(Boolean).join('');
+
+    const actorCardHtml = actor ? `
+      <div class="card-soft">
+        <div class="row-between" style="align-items: flex-start;">
+          <div>
+            <div class="stat-label">Jugador seleccionado</div>
+            <div class="stat-value" style="font-size: 20px; margin-top: 8px;">${escapeHtml(actor.name)}</div>
+            <div class="helper" style="margin-top: 6px;">${escapeHtml(actor.placementLabel || 'Sin propuesta')}</div>
+          </div>
+          <span class="status-pill ${actor.proposedGroupId ? 'status-live' : 'status-closed'}">${escapeHtml(actor.seed ? `Seed ${actor.seed}` : 'Sin seed')}</span>
+        </div>
+      </div>
+    ` : `
+      <div class="card-soft">
+        <div class="empty">Selecciona un jugador para moverlo entre grupos y slots.</div>
+      </div>
+    `;
+
+    const validationHtml = validation.ok ? `
+      <div class="card-soft">
+        <div class="row-between">
+          <div>
+            <div class="stat-label">Validacion</div>
+            <div class="stat-value" style="font-size: 18px; margin-top: 8px;">Propuesta consistente</div>
+          </div>
+          <span class="status-pill status-done">Lista para confirmar</span>
+        </div>
+      </div>
+    ` : (validation.errors || []).length ? `
+      <div class="card-soft">
+        <div class="stat-label" style="margin-bottom: 10px;">Observaciones</div>
+        <div class="stack" style="gap: 8px;">
+          ${(validation.errors || []).map(function (error) {
+            return `<div class="error" style="margin: 0;">${escapeHtml(error)}</div>`;
+          }).join('')}
+        </div>
+      </div>
+    ` : '';
+
+    const groupsHtml = groups.length ? `
+      <div class="groups-grid">
+        ${groups.map(function (group) {
+          return `
+            <article class="card-soft group-card">
+              <div class="row-between" style="align-items: flex-start;">
+                <div>
+                  <div class="stat-label">Grupo</div>
+                  <div class="stat-value" style="font-size: 20px; margin-top: 8px;">${escapeHtml(group.groupId)}</div>
+                </div>
+                <span class="status-pill status-closed">3 slots</span>
+              </div>
+
+              <div class="group-slots">
+                ${group.slots.map(function (slot) {
+                  const buttonHtml = slot.canMoveHere ? `
+                    <button
+                      class="admin-action-button admin-action-button-secondary groups-move-button"
+                      onclick="submitSinglesGroupsAction('move_player', { targetGroupId: '${escapeHtml(group.groupId)}', targetSlot: '${escapeHtml(slot.slot)}' })"
+                    >
+                      Mover aqui
+                    </button>
+                  ` : '';
+
+                  return `
+                    <div class="group-slot-card ${slot.isActorHere ? 'is-actor' : ''}">
+                      <div class="row-between" style="gap: 10px; align-items: center;">
+                        <span class="group-slot-badge">${escapeHtml(slot.slot)}</span>
+                        <span class="helper">${escapeHtml(slot.seed ? `Seed ${slot.seed}` : 'Sin seed')}</span>
+                      </div>
+                      <div class="doubles-row-name" style="margin-top: 10px;">${escapeHtml(slot.playerName || 'Sin asignar')}</div>
+                      <div class="helper" style="margin-top: 6px;">${escapeHtml(slot.detail || '')}</div>
+                      ${slot.isActorHere ? '<div class="helper" style="margin-top: 8px;">Ubicacion actual</div>' : buttonHtml}
+                    </div>
+                  `;
+                }).join('')}
+              </div>
+            </article>
+          `;
+        }).join('')}
+      </div>
+    ` : `
+      <div class="card-soft">
+        <div class="empty">Aun no hay grupos propuestos para mostrar.</div>
+      </div>
+    `;
+
+    root.innerHTML = `
+      <div class="stack">
+        <div class="grid-stats groups-summary-grid">
+          <div class="stat">
+            <div class="stat-label">Checked in</div>
+            <div class="stat-value">${escapeHtml(vm.summary.checkedIn)}</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Grupos</div>
+            <div class="stat-value">${escapeHtml(vm.summary.proposedGroups)}</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Asignados</div>
+            <div class="stat-value">${escapeHtml(vm.summary.assigned)}</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Confirmados</div>
+            <div class="stat-value">${escapeHtml(vm.summary.confirmedGroups)}</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Issues</div>
+            <div class="stat-value">${escapeHtml(vm.summary.issues)}</div>
+          </div>
+        </div>
+
+        <div class="card-soft">
+          <div class="helper">${escapeHtml(vm.statusNote || '')}</div>
+        </div>
+
+        <div class="card-soft">
+          <div class="stat-label" style="margin-bottom: 10px;">Jugador</div>
+          <select id="groups-player-select" class="doubles-select" onchange="handleSinglesGroupsPlayerChange()">
+            <option value="">Selecciona jugador</option>
+            ${(vm.playerOptions || []).map(function (option) {
+              const selected = actor && actor.id === option.id ? ' selected' : '';
+              return `<option value="${escapeHtml(option.id)}"${selected}>${escapeHtml(option.name)} · ${escapeHtml(option.placementLabel || 'Sin propuesta')}</option>`;
+            }).join('')}
+          </select>
+        </div>
+
+        ${actorCardHtml}
+
+        ${actionButtons ? `
+          <div class="card-soft">
+            <div class="stat-label" style="margin-bottom: 10px;">Acciones</div>
+            <div class="doubles-actions-grid">${actionButtons}</div>
+          </div>
+        ` : ''}
+
+        ${validationHtml}
+
+        ${groupsHtml}
+      </div>
+    `;
+  }
+
+  function renderSinglesGroupsConfigError(error) {
+    const root = document.getElementById('singles-groups-content');
+    if (!root) return;
+    const message = error && error.message ? error.message : String(error || 'Error desconocido');
+    root.innerHTML = `<div class="error">No se pudo cargar la configuracion de grupos: ${escapeHtml(message)}</div>`;
+  }
+
+  function handleSinglesGroupsPlayerChange() {
+    const select = document.getElementById('groups-player-select');
+    const playerId = select ? String(select.value || '') : '';
+    saveGroupsPlayerId(playerId);
+
+    google.script.run
+      .withSuccessHandler(renderSinglesGroupsConfig)
+      .withFailureHandler(renderSinglesGroupsConfigError)
+      .getSinglesGroupsViewModel(playerId);
+  }
+
+  function submitSinglesGroupsAction(action, extraPayload) {
+    const payload = extraPayload || {};
+    const playerId = getSavedGroupsPlayerId();
+
+    google.script.run
+      .withSuccessHandler(function (vm) {
+        renderSinglesGroupsConfig(vm);
+        loadAdminControl();
+      })
+      .withFailureHandler(renderSinglesGroupsConfigError)
+      .applySinglesGroupsActionFromUi({
+        action: action,
+        playerId: playerId,
+        selectedPlayerId: playerId,
+        targetGroupId: payload.targetGroupId || '',
+        targetSlot: payload.targetSlot || '',
+      });
   }
 
   function renderDoublesConfig(vm) {
@@ -1340,6 +1563,22 @@
   function getSavedPlayerId() {
     try {
       return localStorage.getItem(LOCAL_STORAGE_PLAYER_KEY) || '';
+    } catch (e) {
+      return '';
+    }
+  }
+
+  function saveGroupsPlayerId(playerId) {
+    try {
+      localStorage.setItem(LOCAL_STORAGE_GROUPS_PLAYER_KEY, String(playerId || ''));
+    } catch (e) {
+      console.warn('No se pudo guardar player_id de grupos en localStorage', e);
+    }
+  }
+
+  function getSavedGroupsPlayerId() {
+    try {
+      return localStorage.getItem(LOCAL_STORAGE_GROUPS_PLAYER_KEY) || '';
     } catch (e) {
       return '';
     }
