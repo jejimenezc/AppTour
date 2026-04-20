@@ -14,12 +14,6 @@
         <button class="app-tab" type="button" data-screen-tab="myday" aria-selected="false" onclick="setActiveAppScreen('myday')">
           Mi jornada
         </button>
-        <button class="app-tab" type="button" data-screen-tab="groups" aria-selected="false" onclick="setActiveAppScreen('groups')">
-          Grupos
-        </button>
-        <button class="app-tab" type="button" data-screen-tab="doubles" aria-selected="false" onclick="setActiveAppScreen('doubles')">
-          Dobles
-        </button>
         <button class="app-tab" type="button" data-screen-tab="admin" aria-selected="false" onclick="setActiveAppScreen('admin')">
           Control
         </button>
@@ -96,6 +90,10 @@
           </div>
         </div>
 
+        <div id="myday-doubles-entry-card" style="margin-bottom: 12px;">
+          <div class="loading">Cargando acceso a dobles...</div>
+        </div>
+
         <div id="myday-content">
           <div class="empty">Selecciona para ver tu jornada.</div>
         </div>
@@ -108,8 +106,12 @@
           <div>
             <p class="subtitle">Configuracion previa</p>
             <h2 class="section-title" style="margin: 0;">Partners dobles</h2>
-            <p class="helper" style="margin-top: 6px;">Confirma pareja, entra al pool o revisa el estado general antes del corte.</p>
+            <p class="helper" style="margin-top: 6px;">Confirma pareja, entra al pool o revisa el estado general usando el jugador seleccionado en Mi jornada.</p>
           </div>
+
+          <button class="admin-action-button admin-action-button-secondary" type="button" onclick="setActiveAppScreen('myday')">
+            Volver a Mi jornada
+          </button>
         </div>
 
         <div id="doubles-config-content">
@@ -126,6 +128,10 @@
             <h2 class="section-title" style="margin: 0;">Grupos singles</h2>
             <p class="helper" style="margin-top: 6px;">Edita la propuesta base, revisa validaciones y confirma los grupos antes de iniciar la fase.</p>
           </div>
+
+          <button class="admin-action-button admin-action-button-secondary" type="button" onclick="setActiveAppScreen('admin')">
+            Volver a Control
+          </button>
         </div>
 
         <div id="singles-groups-content">
@@ -136,6 +142,10 @@
 
     <div class="app-screen" data-screen-panel="admin">
       <section class="card">
+        <div id="admin-groups-entry-card" style="margin-bottom: 12px;">
+          <div class="loading">Cargando acceso a grupos...</div>
+        </div>
+
         <div class="row-between" style="margin-bottom: 12px; align-items: flex-end; flex-wrap: wrap;">
           <div>
             <p class="subtitle">Panel temporal</p>

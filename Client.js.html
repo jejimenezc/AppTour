@@ -48,9 +48,10 @@
     const nextScreen = String(screen || 'public').trim() || 'public';
     const tabs = document.querySelectorAll('[data-screen-tab]');
     const panels = document.querySelectorAll('[data-screen-panel]');
+    const activeTabScreen = resolveParentScreenForTabs(nextScreen);
 
     tabs.forEach(function (tab) {
-      const isActive = tab.getAttribute('data-screen-tab') === nextScreen;
+      const isActive = tab.getAttribute('data-screen-tab') === activeTabScreen;
       tab.classList.toggle('is-active', isActive);
       tab.setAttribute('aria-selected', isActive ? 'true' : 'false');
     });
@@ -69,6 +70,13 @@
       loadDoublesConfig({ silent: true });
     }
     window.scrollTo({ top: 0, behavior: 'auto' });
+  }
+
+  function resolveParentScreenForTabs(screen) {
+    const value = String(screen || '').trim();
+    if (value === 'doubles') return 'myday';
+    if (value === 'groups') return 'admin';
+    return value || 'public';
   }
 
   function startPublicAutoRefresh() {
@@ -284,6 +292,7 @@
 
   function renderSinglesGroupsConfig(vm) {
     currentSinglesGroupsVm = vm;
+    renderAdminGroupsEntryCard();
 
     const root = document.getElementById('singles-groups-content');
     if (!root) return;
@@ -447,6 +456,7 @@
   }
 
   function renderSinglesGroupsConfigError(error) {
+    renderAdminGroupsEntryCard();
     const root = document.getElementById('singles-groups-content');
     if (!root) return;
     const message = error && error.message ? error.message : String(error || 'Error desconocido');
@@ -485,6 +495,7 @@
 
   function renderDoublesConfig(vm) {
     currentDoublesVm = vm;
+    renderMyDayDoublesEntryCard();
 
     const root = document.getElementById('doubles-config-content');
     if (!root) return;
@@ -516,7 +527,7 @@
       </div>
     ` : `
       <div class="card-soft">
-        <div class="empty">Selecciona tu nombre para gestionar tu estado de dobles.</div>
+        <div class="empty">Selecciona tu nombre en Mi jornada para gestionar tu estado de dobles.</div>
       </div>
     `;
 
@@ -556,14 +567,9 @@
         </div>
 
         <div class="card-soft">
-          <div class="stat-label" style="margin-bottom: 10px;">Jugador</div>
-          <select id="doubles-player-select" class="doubles-select" onchange="handleDoublesPlayerChange()">
-            <option value="">Selecciona tu nombre</option>
-            ${(vm.playerOptions || []).map(function (option) {
-              const selected = actor && actor.id === option.id ? ' selected' : '';
-              return `<option value="${escapeHtml(option.id)}"${selected}>${escapeHtml(option.name)}</option>`;
-            }).join('')}
-          </select>
+          <div class="stat-label" style="margin-bottom: 8px;">Jugador desde Mi jornada</div>
+          <div class="stat-value" style="font-size: 18px;">${escapeHtml(actor ? actor.name : 'Sin seleccion activa')}</div>
+          <div class="helper" style="margin-top: 6px;">${escapeHtml(actor ? 'Esta pantalla usa automaticamente el jugador elegido en Mi jornada.' : 'Vuelve a Mi jornada y selecciona tu nombre para habilitar este check-in.')}</div>
         </div>
 
         ${actorCardHtml}
@@ -595,21 +601,11 @@
   }
 
   function renderDoublesConfigError(error) {
+    renderMyDayDoublesEntryCard();
     const root = document.getElementById('doubles-config-content');
     if (!root) return;
     const message = error && error.message ? error.message : String(error || 'Error desconocido');
     root.innerHTML = `<div class="error">No se pudo cargar la configuracion de dobles: ${escapeHtml(message)}</div>`;
-  }
-
-  function handleDoublesPlayerChange() {
-    const select = document.getElementById('doubles-player-select');
-    const playerId = select ? String(select.value || '') : '';
-    savePlayerId(playerId);
-
-    google.script.run
-      .withSuccessHandler(renderDoublesConfig)
-      .withFailureHandler(renderDoublesConfigError)
-      .getDoublesConfigViewModel(playerId);
   }
 
   function submitDoublesConfigAction(action) {
@@ -677,6 +673,7 @@
 
   function renderAdminControl(vm) {
     currentAdminVm = vm;
+    renderAdminGroupsEntryCard();
 
     const root = document.getElementById('admin-control-content');
     if (!root) return;
@@ -796,6 +793,7 @@
   }
 
   function renderAdminControlError(error) {
+    renderAdminGroupsEntryCard();
     const root = document.getElementById('admin-control-content');
     if (!root) return;
 
@@ -955,12 +953,73 @@
     el.style.color = isError ? '#991b1b' : '';
   }
 
+  function renderAdminGroupsEntryCard() {
+    const root = document.getElementById('admin-groups-entry-card');
+    if (!root) return;
+
+    const state = buildAdminGroupsEntryState();
+    const attrs = state.disabled
+      ? ''
+      : ' role="button" tabindex="0" onclick="setActiveAppScreen(\'groups\')" onkeydown="handleScreenEntryCardKeydown(event, \'groups\')"';
+    const className = state.disabled
+      ? 'card-soft touch-card touch-card--disabled'
+      : 'card-soft touch-card touch-card--interactive';
+
+    root.innerHTML = `
+      <div class="${className}"${attrs}>
+        <div class="row-between" style="align-items: flex-start;">
+          <div>
+            <div class="stat-label">Subpantalla</div>
+            <div class="stat-value" style="font-size: 20px; margin-top: 8px;">Grupos singles</div>
+            <div class="helper" style="margin-top: 6px;">${escapeHtml(state.detail)}</div>
+          </div>
+          <span class="status-pill ${state.badgeClass}">${escapeHtml(state.badgeLabel)}</span>
+        </div>
+
+        <div class="touch-card__cta ${state.disabled ? 'touch-card__cta--disabled' : 'touch-card__cta--active'}" style="margin-top: 14px;">
+          <div class="touch-card__cta-label">${escapeHtml(state.ctaLabel)}</div>
+          ${state.helperText ? `<div class="helper" style="margin-top: 8px;">${escapeHtml(state.helperText)}</div>` : ''}
+        </div>
+      </div>
+    `;
+  }
+
+  function buildAdminGroupsEntryState() {
+    const vm = currentSinglesGroupsVm || {};
+    const summary = vm.summary || {};
+    const adminVm = currentAdminVm || {};
+    const status = String(vm.tournamentStatus || adminVm.tournamentStatus || '').trim();
+
+    let badgeLabel = 'Listo';
+    let badgeClass = 'status-done';
+
+    if (status === 'awaiting_singles_group_confirmation') {
+      badgeLabel = 'Abierto';
+      badgeClass = 'status-live';
+    } else if ((summary.confirmedGroups || 0) > 0 || status === 'running_groups' || status === 'running_singles_knockout') {
+      badgeLabel = 'Cerrado';
+      badgeClass = 'status-closed';
+    }
+
+    return {
+      disabled: false,
+      badgeLabel: badgeLabel,
+      badgeClass: badgeClass,
+      detail: 'Revisa la propuesta, ajusta slots y confirma el checkpoint de grupos desde Control.',
+      ctaLabel: 'Abrir editor de grupos',
+      helperText: badgeLabel === 'Abierto'
+        ? 'La ventana de confirmacion esta activa.'
+        : 'Esta vista queda subsumida dentro de Control como acceso operativo.',
+    };
+  }
+
   function renderPlayerSelector(players) {
     const select = document.getElementById('my-player-select');
     if (!select) return;
 
     if (!players || players.length === 0) {
       select.innerHTML = '<option value="">No hay jugadores disponibles</option>';
+      renderMyDayDoublesEntryCard();
       return;
     }
 
@@ -977,7 +1036,10 @@
 
     if (savedPlayerId && players.some(p => p.id === savedPlayerId)) {
       loadMyDayFromSelect(true);
+      return;
     }
+
+    renderMyDayDoublesEntryCard();
   }
 
   function loadMyDayFromSelect(isAutoLoad) {
@@ -985,14 +1047,18 @@
     const playerId = select.value;
 
     if (!playerId) {
+      savePlayerId('');
+      currentMyDayVm = null;
       const root = document.getElementById('myday-content');
       if (root) {
         root.innerHTML = '<div class="empty">Selecciona para ver tu jornada.</div>';
       }
+      loadDoublesConfig({ silent: true });
       return;
     }
 
     savePlayerId(playerId);
+    loadDoublesConfig({ silent: true });
 
     const root = document.getElementById('myday-content');
     root.innerHTML = '<div class="loading">Cargando jornada...</div>';
@@ -1005,6 +1071,7 @@
 
   function renderMyDay(vm) {
     currentMyDayVm = vm;
+    renderMyDayDoublesEntryCard();
 
     const root = document.getElementById('myday-content');
     const playerRoleUi = getMyDayPlayerRoleUi(vm);
@@ -1113,6 +1180,95 @@
 
     event.preventDefault();
     openMatchCapture();
+  }
+
+  function renderMyDayDoublesEntryCard() {
+    const root = document.getElementById('myday-doubles-entry-card');
+    if (!root) return;
+
+    const state = buildMyDayDoublesEntryState();
+    const attrs = state.disabled
+      ? ''
+      : ' role="button" tabindex="0" onclick="openDoublesCheckInScreen()" onkeydown="handleScreenEntryCardKeydown(event, \'doubles\')"';
+    const className = state.disabled
+      ? 'card-soft touch-card touch-card--disabled'
+      : 'card-soft touch-card touch-card--interactive';
+
+    root.innerHTML = `
+      <div class="${className}"${attrs}>
+        <div class="row-between" style="align-items: flex-start;">
+          <div>
+            <div class="stat-label">Subpantalla</div>
+            <div class="stat-value" style="font-size: 20px; margin-top: 8px;">Check-in en dobles</div>
+            <div class="helper" style="margin-top: 6px;">${escapeHtml(state.detail)}</div>
+          </div>
+          <span class="status-pill ${state.badgeClass}">${escapeHtml(state.badgeLabel)}</span>
+        </div>
+
+        <div class="touch-card__cta ${state.disabled ? 'touch-card__cta--disabled' : 'touch-card__cta--active'}" style="margin-top: 14px;">
+          <div class="touch-card__cta-label">${escapeHtml(state.ctaLabel)}</div>
+          ${state.helperText ? `<div class="helper" style="margin-top: 8px;">${escapeHtml(state.helperText)}</div>` : ''}
+        </div>
+      </div>
+    `;
+  }
+
+  function buildMyDayDoublesEntryState() {
+    const playerId = getSavedPlayerId();
+    const hasPlayer = !!playerId;
+    const vm = currentDoublesVm || {};
+    const actor = vm.actor || null;
+    const status = String(vm.tournamentStatus || '').trim();
+
+    let badgeLabel = 'Listo';
+    let badgeClass = 'status-done';
+
+    if (status === 'awaiting_doubles_confirmation') {
+      badgeLabel = 'Abierto';
+      badgeClass = 'status-live';
+    } else if (status) {
+      badgeLabel = 'Cerrado';
+      badgeClass = 'status-closed';
+    }
+
+    if (!hasPlayer) {
+      return {
+        disabled: true,
+        badgeLabel: badgeLabel,
+        badgeClass: badgeClass,
+        detail: 'Usa el selector de Mi jornada para cargar tu estado personal antes de entrar.',
+        ctaLabel: 'Selecciona tu nombre en Mi jornada',
+        helperText: 'El check-in de dobles hereda automaticamente el jugador que elijas arriba.',
+      };
+    }
+
+    return {
+      disabled: false,
+      badgeLabel: badgeLabel,
+      badgeClass: badgeClass,
+      detail: actor
+        ? `${actor.name} · ${buildDoublesActorDetail(actor)}`
+        : 'Revisa tu estado personal, confirma partner o entra al pool.',
+      ctaLabel: 'Abrir check-in de dobles',
+      helperText: status === 'awaiting_doubles_confirmation'
+        ? 'La ventana esta activa para confirmar partner, entrar al pool o declinar.'
+        : 'La pantalla conserva el contexto del jugador seleccionado.',
+    };
+  }
+
+  function openDoublesCheckInScreen() {
+    if (!getSavedPlayerId()) return;
+    setActiveAppScreen('doubles');
+  }
+
+  function handleScreenEntryCardKeydown(event, screen) {
+    if (!event) return;
+    const key = String(event.key || '');
+    if (key !== 'Enter' && key !== ' ') return;
+
+    event.preventDefault();
+    if (screen === 'doubles') openDoublesCheckInScreen();
+    if (screen === 'groups') setActiveAppScreen('groups');
   }
 
   function renderMyDayTimeline(items) {

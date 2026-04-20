@@ -74,7 +74,7 @@
 
   .app-tabbar {
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 10px;
     width: 100%;
   }
@@ -396,6 +396,11 @@
   .touch-card--interactive {
     cursor: pointer;
     transition: transform 120ms ease, box-shadow 160ms ease, border-color 160ms ease, background 160ms ease;
+  }
+
+  .touch-card--disabled {
+    cursor: default;
+    opacity: 0.9;
   }
 
   .touch-card--interactive:focus-visible {
