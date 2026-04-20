@@ -147,6 +147,8 @@ function generateInitialEliminationMatches(matchups) {
  * Crea bloques iniciales para la primera ronda de singles.
  *
  * Reglas:
+ * - si 12 jugadores => 4 por bracket => SF => 2 partidos por bracket = 6 total => 1 bloque
+ * - si 18 jugadores => 6 por bracket => QF con byes => 4 partidos por bracket = 12 total => 1 bloque
  * - si 24 jugadores => 8 por bracket => QF => 4 partidos por bracket = 12 total => 1 bloque
  * - si 36 jugadores => 12 por bracket => R16 parcial => 4 partidos por bracket = 12 total => 1 bloque
  *
