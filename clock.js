@@ -224,7 +224,7 @@ function getTournamentClockState_() {
     elapsedMs += Math.max(0, realNowDate.getTime() - realAnchorDate.getTime());
   }
 
-  const internalNowTs = formatDateTime(new Date(startDate.getTime() + elapsedMs));
+  const internalNowTs = formatParsedBlockDate(new Date(startDate.getTime() + elapsedMs));
 
   if (needsPersist) {
     setConfigValue('clock_internal_anchor_ts', internalAnchorTs, 'Ancla interna del reloj del torneo');

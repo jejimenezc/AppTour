@@ -466,14 +466,7 @@ function addMinutesToDateTimeText(dateTimeText, minutes) {
   }
 
   const shifted = new Date(parsed.getTime() + Number(minutes || 0) * 60 * 1000);
-  const year = shifted.getUTCFullYear();
-  const month = String(shifted.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(shifted.getUTCDate()).padStart(2, '0');
-  const hour = String(shifted.getUTCHours()).padStart(2, '0');
-  const minute = String(shifted.getUTCMinutes()).padStart(2, '0');
-  const second = String(shifted.getUTCSeconds()).padStart(2, '0');
-
-  return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
+  return formatParsedBlockDate(shifted);
 }
 
 /**
