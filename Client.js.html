@@ -15,6 +15,8 @@
   let doublesLoadRequestSeq = 0;
   let doublesLoadRequestActive = 0;
   let doublesIsLoading = false;
+  let doublesLoadingTitle = '';
+  let doublesLoadingDetail = '';
 
   document.addEventListener('DOMContentLoaded', function () {
     initializeAppScreens();
@@ -284,7 +286,13 @@
     currentDoublesVm = null;
     doublesIsLoading = true;
     renderMyDayDoublesEntryCard();
-    root.innerHTML = buildDoublesLoadingHtml(silent);
+    root.innerHTML = buildDoublesLoadingHtml({
+      silent: silent,
+      title: doublesLoadingTitle,
+      detail: doublesLoadingDetail,
+    });
+    doublesLoadingTitle = '';
+    doublesLoadingDetail = '';
 
     google.script.run
       .withSuccessHandler(function (vm) {
@@ -300,13 +308,16 @@
       .getDoublesConfigViewModel(getSavedPlayerId());
   }
 
-  function buildDoublesLoadingHtml(isSilent) {
+  function buildDoublesLoadingHtml(options) {
+    const opts = options || {};
+    const title = String(opts.title || '').trim() || (opts.silent ? 'Sincronizando check-in...' : 'Cargando configuracion de dobles...');
+    const detail = String(opts.detail || '').trim() || 'Estamos actualizando el estado del jugador seleccionado antes de mostrar las acciones disponibles.';
     return `
       <div class="card-soft doubles-loading-shell">
         <div class="doubles-loading-spinner" aria-hidden="true"></div>
         <div>
-          <div class="stat-value" style="font-size: 18px; margin-top: 0;">${escapeHtml(isSilent ? 'Sincronizando check-in...' : 'Cargando configuracion de dobles...')}</div>
-          <div class="helper" style="margin-top: 8px;">${escapeHtml('Estamos actualizando el estado del jugador seleccionado antes de mostrar las acciones disponibles.')}</div>
+          <div class="stat-value" style="font-size: 18px; margin-top: 0;">${escapeHtml(title)}</div>
+          <div class="helper" style="margin-top: 8px;">${escapeHtml(detail)}</div>
         </div>
       </div>
     `;
@@ -543,6 +554,9 @@
     const partnerOptionIds = actor && actor.partnerOptions
       ? actor.partnerOptions.map(function (option) { return String(option.id || ''); })
       : [];
+    const actorHasIncomingRequest = !!actor && actor.status === 'partner_pending' && !!actor.requestFromId;
+    const actorHasOutgoingRequest = !!actor && actor.status === 'partner_pending' && !!actor.requestToId && !actor.requestFromId;
+    const actorIsInteractionLocked = actorHasIncomingRequest || actorHasOutgoingRequest;
 
     const actorCardHtml = actor ? `
       <div class="card-soft">
@@ -569,15 +583,22 @@
       </div>
     ` : '';
 
+    const actorWaitingHtml = actorHasOutgoingRequest ? `
+      <div class="doubles-action-card doubles-action-card--warning">
+        <div class="doubles-action-card__title">En espera de confirmacion</div>
+        <div class="doubles-action-card__detail">${escapeHtml(actor.requestToLabel ? `Tu solicitud a ${actor.requestToLabel} sigue pendiente.` : 'Tu solicitud de partner fue enviada y esta pendiente de respuesta.')}</div>
+        <div class="doubles-action-card__meta">Mientras esperas, check-in queda temporalmente bloqueado</div>
+      </div>
+    ` : '';
+
     const actionButtons = actor ? `
       <div class="card-soft">
         <div class="stat-label" style="margin-bottom: 10px;">Acciones</div>
         <div class="doubles-action-card-grid">
           ${actor.availableActions.canConfirmPartner ? renderDoublesActionCard('Aceptar solicitud', `Aceptar solicitud de ${actor.requestFromLabel || 'partner'}.`, 'confirm_partner', 'warning') : ''}
           ${actor.availableActions.canRejectPartner ? renderDoublesActionCard('Rechazar solicitud', `No aceptar solicitud de ${actor.requestFromLabel || 'partner'}.`, 'reject_partner', 'danger') : ''}
-          ${actor.availableActions.canOptIntoPool ? renderDoublesActionCard('Asigname un partner al azar', 'Entrar al pool para asignacion automatica al cierre.', 'opt_into_pool', 'primary') : ''}
-          ${actor.availableActions.canDecline ? renderDoublesActionCard('Declino competir en dobles', 'Salir del proceso de dobles por ahora.', 'decline_doubles', 'neutral') : ''}
-          ${actor.availableActions.canResetToEligible ? renderDoublesActionCard('Quedar disponible', 'Volver al estado disponible para elegir o recibir partner.', 'back_to_eligible', 'neutral') : ''}
+          ${!actorIsInteractionLocked && actor.availableActions.canOptIntoPool ? renderDoublesActionCard('Asigname un partner al azar', 'Entrar al pool para asignacion automatica al cierre.', 'opt_into_pool', 'primary') : ''}
+          ${!actorIsInteractionLocked && actor.availableActions.canDecline ? renderDoublesActionCard('Declino competir en dobles', 'Salir del proceso de dobles por ahora.', 'decline_doubles', 'neutral') : ''}
         </div>
       </div>
     ` : '';
@@ -613,6 +634,8 @@
 
         ${actorConfirmationHtml}
 
+        ${actorWaitingHtml}
+
         <div class="card-soft">
           <div class="helper">${escapeHtml(vm.statusNote || '')}</div>
         </div>
@@ -620,12 +643,13 @@
         ${actionButtons}
 
         <div class="card-soft">
-          <div class="stat-label" style="margin-bottom: 10px;">Estado de jugadores</div>
+          <div class="stat-value" style="font-size: 18px; margin-top: 0; margin-bottom: 10px;">Elegir Partner</div>
           <div class="stack" style="gap: 10px;">
             ${(vm.rows || []).map(function (row) {
               const isPartnerCandidate = !!actor &&
                 !!actor.availableActions &&
                 !!actor.availableActions.canChoosePartner &&
+                !actorIsInteractionLocked &&
                 partnerOptionIds.indexOf(String(row.id || '')) >= 0;
               const isAwaitingThisRow = !!actor &&
                 actor.status === 'partner_pending' &&
@@ -676,10 +700,35 @@
       return;
     }
 
+    if (action === 'propose_partner') {
+      doublesLoadingTitle = 'Enviando solicitud de partner...';
+      doublesLoadingDetail = 'Estamos registrando tu solicitud y actualizando el estado del check-in.';
+    } else if (action === 'confirm_partner') {
+      doublesLoadingTitle = 'Confirmando partner...';
+      doublesLoadingDetail = 'Estamos aceptando la solicitud y actualizando la pareja confirmada.';
+    } else if (action === 'reject_partner') {
+      doublesLoadingTitle = 'Rechazando solicitud...';
+      doublesLoadingDetail = 'Estamos registrando tu respuesta y actualizando el estado del check-in.';
+    } else {
+      doublesLoadingTitle = 'Actualizando check-in...';
+      doublesLoadingDetail = 'Estamos aplicando tu accion y refrescando el estado del jugador seleccionado.';
+    }
+
+    doublesIsLoading = true;
+    currentDoublesVm = null;
+    renderMyDayDoublesEntryCard();
+    const root = document.getElementById('doubles-config-content');
+    if (root) {
+      root.innerHTML = buildDoublesLoadingHtml({
+        silent: true,
+        title: doublesLoadingTitle,
+        detail: doublesLoadingDetail,
+      });
+    }
+
     google.script.run
       .withSuccessHandler(function (vm) {
         renderDoublesConfig(vm);
-        loadPlayerSelector();
       })
       .withFailureHandler(renderDoublesConfigError)
       .applyDoublesConfigActionFromUi({
