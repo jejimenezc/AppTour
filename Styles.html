@@ -486,13 +486,77 @@
     box-shadow: none;
   }
 
-  #capture-modal-overlay .capture-close {
-    padding: 8px 12px;
+  #capture-modal-overlay .capture-sides-map {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  #capture-modal-overlay .capture-sides-map--inline {
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: center;
+    gap: 6px;
+  }
+
+  #capture-modal-overlay .capture-side-card {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    padding: 8px 10px;
     border-radius: 14px;
+    background: #ffffff;
+    border: 1px solid #d6dee8;
+  }
+
+  #capture-modal-overlay .capture-side-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 999px;
+    background: #0f172a;
+    color: #ffffff;
+    font-size: 13px;
+    font-weight: 700;
+    flex: 0 0 auto;
+  }
+
+  #capture-modal-overlay .capture-side-label {
+    font-weight: 700;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+  }
+
+  #capture-modal-overlay .capture-side-vs {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 700;
+    color: #64748b;
+    text-transform: uppercase;
+    text-align: center;
+  }
+
+  #capture-modal-overlay .capture-close {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border-radius: 999px;
     border: 1px solid #d6dee8;
     background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
     cursor: pointer;
     transition: background 120ms ease, border-color 120ms ease;
+    font-size: 22px;
+    line-height: 1;
   }
 
   #capture-modal-overlay .capture-close:hover {
@@ -635,6 +699,26 @@
       width: 100%;
       min-height: 44px;
       font-size: 18px;
+    }
+
+    #capture-modal-overlay .capture-close {
+      width: 40px;
+      max-width: 40px;
+      min-width: 40px;
+      min-height: 40px;
+      padding: 0;
+      flex: 0 0 auto;
+      top: 8px;
+      right: 8px;
+    }
+
+    #capture-modal-overlay .capture-sides-map {
+      grid-template-columns: 1fr;
+    }
+
+    #capture-modal-overlay .capture-sides-map--inline {
+      grid-template-columns: 1fr;
+      gap: 8px;
     }
   }
 

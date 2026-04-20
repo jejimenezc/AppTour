@@ -1000,7 +1000,7 @@
       return {
         label: 'Ingresar resultado',
         disabled: false,
-        helperText: 'Como arbitro puedes confirmar resultado final o estado de cierre.',
+        helperText: 'Como arbitro puedes confirmar resultado final o resultado parcial.',
       };
     }
 
@@ -1008,7 +1008,7 @@
       return {
         label: 'Ingresar resultado',
         disabled: false,
-        helperText: 'Como jugador puedes ingresar resultado final o un estado parcial de cierre.',
+        helperText: 'Como jugador puedes ingresar resultado final o un resultado parcial.',
       };
     }
 
@@ -1030,10 +1030,8 @@
     if (!actions.canOpen) return;
 
     const modalTitle = 'Captura de resultado';
-    const modalIntro = isReferee
-      ? 'Selecciona una opcion rapida para registrar el cierre del partido.'
-      : 'Si el partido no termino, puedes dejar un estado parcial para apoyar el cierre del bloque.';
-    const actionPanelsHtml = buildRefereeCapturePanel();
+    const actionPanelsHtml = buildRefereeCapturePanel(m, isReferee);
+    const actorWarning = isReferee ? '' : 'Los resultados capturados por jugadores pueden ser reemplazados por el arbitro.';
 
     const html = `
       <div id="capture-modal-overlay" style="
@@ -1050,36 +1048,33 @@
           background: white;
           border-radius: 16px;
           padding: 20px;
+          position: relative;
           width: 100%;
           max-width: 480px;
           max-height: 90vh;
           overflow: auto;
         ">
-          <div style="font-weight:bold; margin-bottom:8px; font-size:18px;">
+          <button class="capture-close" type="button" aria-label="Cerrar captura" onclick="closeMatchCapture()">
+            <span aria-hidden="true">&times;</span>
+          </button>
+
+          <div style="font-weight:bold; font-size:18px; margin-bottom: 6px; padding-right: 44px;">
             ${escapeHtml(modalTitle)}
           </div>
 
-          <div style="margin-bottom:12px; font-weight:bold;">
-            ${escapeHtml(m.matchupLabel || `${m.leftLabel} vs ${m.rightLabel}`)}
-          </div>
-
-          <div class="helper" style="margin-bottom: 16px;">
+          <div class="helper" style="margin-bottom: 12px; padding-right: 44px;">
             Mesa ${escapeHtml(m.tableNo)} · ${escapeHtml(m.phaseLabel)}
           </div>
 
-          <div class="helper" style="margin-bottom: 16px;">
-            ${escapeHtml(modalIntro)}
+          ${buildCaptureSidesLegend(m)}
+
+          <div class="helper" style="display:none;">
+            Mesa ${escapeHtml(m.tableNo)} · ${escapeHtml(m.phaseLabel)}
           </div>
 
           ${actionPanelsHtml}
 
-          <div style="margin-top:16px;" class="row-between">
-            <button class="capture-close" onclick="closeMatchCapture()">
-              Cerrar
-            </button>
-
-            <div class="helper">${escapeHtml(isReferee ? 'Usa opciones estandar para minimizar errores.' : 'Los resultados capturados por jugadores pueden ser reemplazados por el arbitro.')}</div>
-          </div>
+          ${actorWarning ? `<div class="helper" style="margin-top: 14px;">${escapeHtml(actorWarning)}</div>` : ''}
 
           <div id="capture-feedback" class="helper" style="display:none; margin-top:12px; color:#0f172a;"></div>
           <div id="capture-error" class="error" style="display:none; margin-top:12px;"></div>
@@ -1091,24 +1086,40 @@
     document.body.insertAdjacentHTML('beforeend', html);
   }
 
-  function buildRefereeCapturePanel() {
+  function buildCaptureSidesLegend(match) {
+    return `
+      <div class="capture-sides-map capture-sides-map--inline" style="margin-bottom: 14px;">
+        <div class="capture-side-card">
+          <span class="capture-side-badge">A</span>
+          <div class="capture-side-label">${escapeHtml(match.leftLabel || '-')}</div>
+        </div>
+        <div class="capture-side-vs">VS</div>
+        <div class="capture-side-card">
+          <span class="capture-side-badge">B</span>
+          <div class="capture-side-label">${escapeHtml(match.rightLabel || '-')}</div>
+        </div>
+      </div>
+    `;
+  }
+
+  function buildRefereeCapturePanel(match, isReferee) {
     return `
       <div class="card-soft" style="margin-bottom: 14px;">
         <div class="stat-label" style="margin-bottom: 10px;">Resultado final</div>
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-          <button class="${captureButtonClass()}" onclick="submitMatchCaptureFinal(2,0, this)">2-0</button>
-          <button class="${captureButtonClass()}" onclick="submitMatchCaptureFinal(2,1, this)">2-1</button>
-          <button class="${captureButtonClass()}" onclick="submitMatchCaptureFinal(0,2, this)">0-2</button>
-          <button class="${captureButtonClass()}" onclick="submitMatchCaptureFinal(1,2, this)">1-2</button>
+          <button class="${captureButtonClass()}" onclick="submitMatchCaptureFinal(2,0, this)">A gana 2-0</button>
+          <button class="${captureButtonClass()}" onclick="submitMatchCaptureFinal(2,1, this)">A gana 2-1</button>
+          <button class="${captureButtonClass()}" onclick="submitMatchCaptureFinal(0,2, this)">B gana 0-2</button>
+          <button class="${captureButtonClass()}" onclick="submitMatchCaptureFinal(1,2, this)">B gana 1-2</button>
         </div>
       </div>
 
       <div class="card-soft">
-        <div class="stat-label" style="margin-bottom: 10px;">Estado de cierre</div>
+        <div class="stat-label" style="margin-bottom: 10px;">Resultado parcial (OPCIONAL)</div>
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
           <button class="${captureButtonClass(true)}" onclick="submitMatchCaptureClosingState('A_1_0', this)">A lidera 1-0</button>
-          <button class="${captureButtonClass(true)}" onclick="submitMatchCaptureClosingState('B_1_0', this)">B lidera 1-0</button>
-          <button class="${captureButtonClass(true)}" onclick="submitMatchCaptureClosingState('ONE_ONE', this)">Van 1-1</button>
+          <button class="${captureButtonClass(true)}" onclick="submitMatchCaptureClosingState('B_1_0', this)">B lidera 0-1</button>
+          <button class="${captureButtonClass(true)}" onclick="submitMatchCaptureClosingState('ONE_ONE', this)">van 1-1</button>
           <button class="${captureButtonClass(true)}" onclick="submitMatchCaptureClosingState('NOT_STARTED', this)">No iniciado</button>
         </div>
       </div>
