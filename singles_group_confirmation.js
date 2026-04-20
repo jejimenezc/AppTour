@@ -1,20 +1,11 @@
 /**
- * Abre la ventana de confirmación de grupos de singles.
+ * Abre la ventana de confirmacion de grupos de singles.
  * Genera propuesta inicial en proposed_group_id / proposed_group_slot.
  */
 function openSinglesGroupConfirmationWindow() {
-  const players = getPlayers();
-
-  // limpiar propuesta previa
-  players.forEach(player => {
-    updatePlayer(player.player_id, {
-      proposed_group_id: '',
-      proposed_group_slot: '',
-    });
-  });
-
+  clearProposedGroups();
   generateProposedSinglesGroups();
-  setConfigValue('tournament_status', 'awaiting_singles_group_confirmation', 'Ventana de confirmación de grupos abierta');
+  setConfigValue('tournament_status', 'awaiting_singles_group_confirmation', 'Ventana de confirmacion de grupos abierta');
 }
 
 /**
@@ -23,40 +14,39 @@ function openSinglesGroupConfirmationWindow() {
  *
  * Regla:
  * - jugadores activos del torneo
- * - agrupación de 3
+ * - agrupacion de 3
  */
 function generateProposedSinglesGroups() {
-  const players = getTournamentPlayers();
-  validatePlayerCountForGroups(players);
+  const players = getPlayers().slice();
+  const tournamentPlayerLookup = getTournamentPlayerIdLookup();
+  const tournamentPlayers = players.filter(player => !!tournamentPlayerLookup[String(player.player_id)]);
+  validatePlayerCountForGroups(tournamentPlayers);
 
-  const numGroups = players.length / 3;
+  const numGroups = tournamentPlayers.length / 3;
   const groupIds = generateGroupIds(numGroups);
   const slots = ['A', 'B', 'C'];
 
-  for (let i = 0; i < players.length; i++) {
+  tournamentPlayers.forEach(player => {
+    player.proposed_group_id = '';
+    player.proposed_group_slot = '';
+  });
+
+  for (let i = 0; i < tournamentPlayers.length; i++) {
     const groupIndex = Math.floor(i / 3);
     const slotIndex = i % 3;
 
-    updatePlayer(players[i].player_id, {
-      proposed_group_id: groupIds[groupIndex],
-      proposed_group_slot: slots[slotIndex],
-    });
+    tournamentPlayers[i].proposed_group_id = groupIds[groupIndex];
+    tournamentPlayers[i].proposed_group_slot = slots[slotIndex];
   }
+
+  replacePlayers(players);
 }
 
 /**
  * Recalcula desde cero la propuesta de grupos.
  */
 function recalculateProposedSinglesGroups() {
-  const players = getPlayers();
-
-  players.forEach(player => {
-    updatePlayer(player.player_id, {
-      proposed_group_id: '',
-      proposed_group_slot: '',
-    });
-  });
-
+  clearProposedGroups();
   generateProposedSinglesGroups();
 }
 
@@ -64,7 +54,7 @@ function recalculateProposedSinglesGroups() {
  * Mueve un jugador a un grupo/slot propuesto.
  *
  * Regla ligera:
- * - si el slot destino está ocupado, intercambia
+ * - si el slot destino esta ocupado, intercambia
  * - no permite dejar duplicados
  *
  * @param {string} playerId
@@ -72,15 +62,19 @@ function recalculateProposedSinglesGroups() {
  * @param {string} targetSlot
  */
 function movePlayerToProposedGroup(playerId, targetGroupId, targetSlot) {
-  const player = getPlayerOrThrow(playerId);
+  const players = getPlayers().slice();
+  const player = players.find(p => String(p.player_id) === String(playerId));
   const slot = String(targetSlot || '').trim().toUpperCase();
 
-  if (!['A', 'B', 'C'].includes(slot)) {
-    throw new Error(`Slot propuesto inválido: ${targetSlot}`);
+  if (!player) {
+    throw new Error(`No existe el jugador ${playerId}`);
   }
 
-  const currentPlayers = getPlayers();
-  const occupant = currentPlayers.find(p =>
+  if (!['A', 'B', 'C'].includes(slot)) {
+    throw new Error(`Slot propuesto invalido: ${targetSlot}`);
+  }
+
+  const occupant = players.find(p =>
     String(p.proposed_group_id || '').trim() === String(targetGroupId) &&
     String(p.proposed_group_slot || '').trim().toUpperCase() === slot
   );
@@ -93,24 +87,20 @@ function movePlayerToProposedGroup(playerId, targetGroupId, targetSlot) {
   }
 
   if (occupant && String(occupant.player_id) !== String(playerId)) {
-    // intercambio
-    updatePlayer(occupant.player_id, {
-      proposed_group_id: playerCurrentGroup,
-      proposed_group_slot: playerCurrentSlot,
-    });
+    occupant.proposed_group_id = playerCurrentGroup;
+    occupant.proposed_group_slot = playerCurrentSlot;
   }
 
-  updatePlayer(playerId, {
-    proposed_group_id: targetGroupId,
-    proposed_group_slot: slot,
-  });
+  player.proposed_group_id = String(targetGroupId || '').trim();
+  player.proposed_group_slot = slot;
+  replacePlayers(players);
 }
 
 /**
  * Valida consistencia del checkpoint de grupos.
  *
  * Reglas:
- * - total de jugadores activos del torneo múltiplo de 3
+ * - total de jugadores activos del torneo multiplo de 3
  * - todos tienen proposed_group_id / proposed_group_slot
  * - sin duplicados por slot
  * - cada grupo debe tener exactamente A, B, C
@@ -122,7 +112,7 @@ function validateSinglesGroupCheckpoint() {
   const players = getTournamentPlayers();
 
   if (players.length % 3 !== 0) {
-    errors.push(`La cantidad de jugadores activos (${players.length}) no es múltiplo de 3.`);
+    errors.push(`La cantidad de jugadores activos (${players.length}) no es multiplo de 3.`);
   }
 
   const seen = {};
@@ -138,7 +128,7 @@ function validateSinglesGroupCheckpoint() {
     }
 
     if (!['A', 'B', 'C'].includes(slot)) {
-      errors.push(`El jugador ${player.player_id} no tiene proposed_group_slot válido.`);
+      errors.push(`El jugador ${player.player_id} no tiene proposed_group_slot valido.`);
       return;
     }
 
@@ -186,14 +176,11 @@ function confirmSinglesGroupsAndStartGroupStage() {
   const tournamentPlayerLookup = getTournamentPlayerIdLookup();
   const allPlayers = getPlayers();
 
-  // limpiar estructuras de groups previas, pero conservar dobles y singles anteriores
   replaceAllRows('Groups', []);
 
-  // eliminar matches de groups anteriores si existieran
   const nonGroupMatches = getMatches().filter(m => String(m.phase_type) !== 'groups');
   replaceAllRows('Matches', nonGroupMatches);
 
-  // eliminar blocks de groups anteriores si existieran
   const nonGroupBlocks = getBlocks().filter(b => String(b.phase_type) !== 'groups');
   replaceAllRows('Blocks', nonGroupBlocks);
 
@@ -227,7 +214,7 @@ function confirmSinglesGroupsAndStartGroupStage() {
 }
 
 /**
- * Crea los 3 bloques iniciales de grupos, continuando desde el último bloque existente.
+ * Crea los 3 bloques iniciales de grupos, continuando desde el ultimo bloque existente.
  */
 function createInitialGroupBlocksAfterExistingBlocks() {
   const existingBlocks = getBlocksSorted();
