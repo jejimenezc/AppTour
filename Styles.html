@@ -111,7 +111,7 @@
   }
 
   .doubles-summary-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .groups-summary-grid {
@@ -139,6 +139,80 @@
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 10px;
+  }
+
+  .doubles-screen-stack {
+    gap: 16px;
+  }
+
+  .doubles-panel {
+    border-color: #d8e1ec;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75);
+  }
+
+  .doubles-stat {
+    min-height: 108px;
+    border: 1px solid #d9e3ee;
+    background:
+      radial-gradient(circle at top right, rgba(59, 130, 246, 0.10), transparent 46%),
+      linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  }
+
+  .doubles-context-name {
+    line-height: 1.15;
+    text-wrap: balance;
+  }
+
+  .doubles-context-copy {
+    max-width: 46ch;
+  }
+
+  .doubles-player-context-card {
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(248,250,252,0.94) 100%),
+      radial-gradient(circle at top left, rgba(14, 165, 233, 0.10), transparent 42%);
+  }
+
+  .doubles-actor-card {
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(248,250,252,0.94) 100%),
+      radial-gradient(circle at top right, rgba(15, 23, 42, 0.08), transparent 42%);
+  }
+
+  .doubles-note-card {
+    border-style: dashed;
+    background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+  }
+
+  .doubles-actions-panel {
+    background: linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(245,247,250,0.95) 100%);
+  }
+
+  .doubles-partner-shell {
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.99) 0%, rgba(248,250,252,0.97) 100%),
+      radial-gradient(circle at top right, rgba(34, 197, 94, 0.08), transparent 36%);
+  }
+
+  .doubles-section-kicker {
+    color: var(--muted);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 700;
+    margin-bottom: 6px;
+  }
+
+  .doubles-section-title {
+    font-size: 24px;
+    line-height: 1.1;
+    font-weight: 800;
+    color: var(--text);
+  }
+
+  .doubles-section-copy {
+    max-width: 48ch;
+    margin-bottom: 6px;
   }
 
   .doubles-action-card {
@@ -248,7 +322,7 @@
     padding: 12px 14px;
     border: 1px solid var(--border);
     border-radius: 16px;
-    background: #ffffff;
+    background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
   }
 
   .doubles-row-card--interactive {
@@ -265,6 +339,7 @@
     font-size: 16px;
     font-weight: 700;
     line-height: 1.3;
+    text-wrap: balance;
   }
 
   .groups-grid {
@@ -906,6 +981,24 @@
     .doubles-action-card-grid,
     .doubles-row-card {
       grid-template-columns: 1fr;
+    }
+
+    .doubles-screen-stack {
+      gap: 14px;
+    }
+
+    .doubles-stat {
+      min-height: 0;
+    }
+
+    .doubles-section-title {
+      font-size: 28px;
+      line-height: 1.05;
+    }
+
+    .doubles-section-copy,
+    .doubles-context-copy {
+      max-width: none;
     }
 
     .doubles-row-card {

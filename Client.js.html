@@ -559,18 +559,18 @@
     const actorIsInteractionLocked = actorHasIncomingRequest || actorHasOutgoingRequest;
 
     const actorCardHtml = actor ? `
-      <div class="card-soft">
+      <div class="card-soft doubles-panel doubles-actor-card">
         <div class="stat-label" style="margin-bottom: 8px;">Tu estado</div>
         <div class="row-between" style="align-items: flex-start;">
           <div>
-            <div class="stat-value" style="font-size: 20px;">${escapeHtml(actor.name)}</div>
-            <div class="helper" style="margin-top: 6px;">${escapeHtml(buildDoublesActorDetail(actor))}</div>
+            <div class="stat-value doubles-context-name" style="font-size: 20px;">${escapeHtml(actor.name)}</div>
+            <div class="helper doubles-context-copy" style="margin-top: 6px;">${escapeHtml(buildDoublesActorDetail(actor))}</div>
           </div>
           ${renderDoublesStatusPill(actor.statusLabel, actor.status)}
         </div>
       </div>
     ` : `
-      <div class="card-soft">
+      <div class="card-soft doubles-panel">
         <div class="empty">Selecciona tu nombre en Mi jornada para gestionar tu estado de dobles.</div>
       </div>
     `;
@@ -592,7 +592,7 @@
     ` : '';
 
     const actionButtons = actor ? `
-      <div class="card-soft">
+      <div class="card-soft doubles-panel doubles-actions-panel">
         <div class="stat-label" style="margin-bottom: 10px;">Acciones</div>
         <div class="doubles-action-card-grid">
           ${actor.availableActions.canConfirmPartner ? renderDoublesActionCard('Aceptar solicitud', `Aceptar solicitud de ${actor.requestFromLabel || 'partner'}.`, 'confirm_partner', 'warning') : ''}
@@ -604,30 +604,30 @@
     ` : '';
 
     root.innerHTML = `
-      <div class="stack">
+      <div class="stack doubles-screen-stack">
         <div class="grid-stats doubles-summary-grid">
-          <div class="stat">
+          <div class="stat doubles-stat">
             <div class="stat-label">Eligible</div>
             <div class="stat-value">${escapeHtml(vm.summary.eligible)}</div>
           </div>
-          <div class="stat">
+          <div class="stat doubles-stat">
             <div class="stat-label">Pool</div>
             <div class="stat-value">${escapeHtml(vm.summary.pool)}</div>
           </div>
-          <div class="stat">
+          <div class="stat doubles-stat">
             <div class="stat-label">Pending</div>
             <div class="stat-value">${escapeHtml(vm.summary.pending)}</div>
           </div>
-          <div class="stat">
+          <div class="stat doubles-stat">
             <div class="stat-label">Confirmed</div>
             <div class="stat-value">${escapeHtml(vm.summary.confirmed)}</div>
           </div>
         </div>
 
-        <div class="card-soft">
+        <div class="card-soft doubles-panel doubles-player-context-card">
           <div class="stat-label" style="margin-bottom: 8px;">Jugador desde Mi jornada</div>
-          <div class="stat-value" style="font-size: 18px;">${escapeHtml(actor ? actor.name : 'Sin seleccion activa')}</div>
-          <div class="helper" style="margin-top: 6px;">${escapeHtml(actor ? 'Esta pantalla usa automaticamente el jugador elegido en Mi jornada.' : 'Vuelve a Mi jornada y selecciona tu nombre para habilitar este check-in.')}</div>
+          <div class="stat-value doubles-context-name">${escapeHtml(actor ? actor.name : 'Sin seleccion activa')}</div>
+          <div class="helper doubles-context-copy" style="margin-top: 6px;">${escapeHtml(actor ? 'Esta pantalla usa automaticamente el jugador elegido en Mi jornada.' : 'Vuelve a Mi jornada y selecciona tu nombre para habilitar este check-in.')}</div>
         </div>
 
         ${actorCardHtml}
@@ -636,14 +636,16 @@
 
         ${actorWaitingHtml}
 
-        <div class="card-soft">
+        <div class="card-soft doubles-panel doubles-note-card">
           <div class="helper">${escapeHtml(vm.statusNote || '')}</div>
         </div>
 
         ${actionButtons}
 
-        <div class="card-soft">
-          <div class="stat-value" style="font-size: 18px; margin-top: 0; margin-bottom: 10px;">Elegir Partner</div>
+        <div class="card-soft doubles-panel doubles-partner-shell">
+          <div class="doubles-section-kicker">Check-in</div>
+          <div class="doubles-section-title">Elegir Partner</div>
+          <div class="helper doubles-section-copy" style="margin-top: 6px;">Revisa disponibilidad y toca una card para enviar una solicitud de partner.</div>
           <div class="stack" style="gap: 10px;">
             ${(vm.rows || []).map(function (row) {
               const isPartnerCandidate = !!actor &&
