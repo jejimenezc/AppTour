@@ -1,144 +1,173 @@
 <div class="page">
   <div class="stack">
-    <section class="card">
-      <div class="header-row">
-        <div>
-          <p class="subtitle">Torneo tenis de mesa</p>
-          <h1 class="title">Pantalla pública</h1>
-          <p class="helper">
-            Vista operativa del bloque actual, mesas activas y partidos en curso.
-          </p>
-        </div>
-
-        <div class="grid-stats" id="top-stats">
-          <div class="stat">
-            <div class="stat-label">Estado</div>
-            <div class="stat-value" id="stat-status">—</div>
-          </div>
-          <div class="stat">
-            <div class="stat-label">Bloque</div>
-            <div class="stat-value" id="stat-block">—</div>
-          </div>
-          <div class="stat">
-            <div class="stat-label">Fase</div>
-            <div class="stat-value" id="stat-phase">—</div>
-          </div>
-          <div class="stat">
-            <div class="stat-label">Actualizado</div>
-            <div class="stat-value" id="stat-updated">—</div>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <section class="card">
-      <div class="row-between" style="margin-bottom: 12px;">
-        <h2 class="section-title" style="margin: 0;">Ahora</h2>
-        <div id="refresh-indicator" class="helper">Actualización automática activada</div>
+    <section class="card app-shell-header">
+      <div>
+        <p class="subtitle">Torneo tenis de mesa</p>
+        <h1 class="title">AppTour</h1>
+        <p class="helper">Una sola vista operativa a la vez, pensada para usar el campeonato en la mano.</p>
       </div>
 
-      <div id="public-screen-content">
-        <div class="loading">Cargando partidos del bloque actual...</div>
-      </div>
-    </section>
-
-    <section class="card">
-      <div class="row-between" style="margin-bottom: 12px; align-items: flex-end;">
-        <div>
-          <h2 class="section-title" style="margin: 0;">Mi jornada</h2>
-          <p class="helper" style="margin-top: 6px;">Consulta tu rol actual, compromiso del bloque y acceso rápido a captura.</p>
-        </div>
-      </div>
-
-      <div class="card-soft" style="margin-bottom: 12px;">
-        <div style="display: flex; align-items: end; gap: 12px; flex-wrap: wrap;">
-          <div style="flex: 1; min-width: 220px;">
-            <div class="stat-label" style="margin-bottom: 6px;">Selecciona tu nombre</div>
-
-            <select
-              id="my-player-select"
-              onchange="loadMyDayFromSelect(true)"
-              style="width: 100%; padding: 10px 12px; border-radius: 12px; border: 1px solid #cbd5e1; font-size: 14px;"
-            >
-              <option value="">Cargando jugadores...</option>
-            </select>
-          </div>
-        </div>
-      </div>
-
-      <div id="myday-content">
-        <div class="empty">Selecciona para ver tu jornada.</div>
-      </div>
-    </section>
-    <section class="card">
-      <div class="row-between" style="margin-bottom: 12px; align-items: flex-end; flex-wrap: wrap;">
-        <div>
-          <h2 class="section-title" style="margin: 0;">Control Provisorio</h2>
-          <p class="helper" style="margin-top: 6px;">Panel temporal para reset, setup y simulacion de torneo.</p>
-        </div>
-
-        <button class="admin-action-button admin-action-button-secondary" onclick="loadAdminControl()">
-          Actualizar panel
+      <div class="app-tabbar" role="tablist" aria-label="Pantallas de AppTour">
+        <button class="app-tab is-active" type="button" data-screen-tab="public" aria-selected="true" onclick="setActiveAppScreen('public')">
+          Publica
+        </button>
+        <button class="app-tab" type="button" data-screen-tab="myday" aria-selected="false" onclick="setActiveAppScreen('myday')">
+          Mi jornada
+        </button>
+        <button class="app-tab" type="button" data-screen-tab="admin" aria-selected="false" onclick="setActiveAppScreen('admin')">
+          Control
         </button>
       </div>
+    </section>
 
-      <div class="card-soft" style="margin-bottom: 12px;">
-        <div class="admin-grid">
-          <div class="admin-field">
-            <div class="stat-label" style="margin-bottom: 6px;">Tournament start ts</div>
-            <input
-              id="admin-start-ts-input"
-              class="admin-text-input"
-              type="text"
-              placeholder="2026-04-18 13:20:00"
-            >
-            <div class="helper" style="margin-top: 6px;">Usa formato yyyy-mm-dd hh:mm:ss o el boton para usar la hora actual.</div>
+    <div class="app-screen is-active" data-screen-panel="public">
+      <section class="card">
+        <div class="header-row">
+          <div>
+            <p class="subtitle">Pantalla publica</p>
+            <h2 class="title">Ahora</h2>
+            <p class="helper">
+              Vista operativa del bloque actual, mesas activas y partidos en curso.
+            </p>
           </div>
 
-          <div class="admin-actions">
-            <button class="admin-action-button" onclick="saveTournamentStartTsFromAdmin()">
-              Guardar hora base
-            </button>
-            <button class="admin-action-button admin-action-button-secondary" onclick="setTournamentStartNowFromAdmin()">
-              Usar ahora
-            </button>
-            <button class="admin-action-button admin-action-button-secondary" onclick="initializeTournamentFlowV2FromAdmin()">
-              Reset V2
-            </button>
-            <button class="admin-action-button admin-action-button-secondary" onclick="seedDemoDoublesFromAdmin()">
-              Helper dobles demo
-            </button>
-            <button class="admin-action-button admin-action-button-secondary" onclick="generateInitialDoublesFromAdmin()">
-              Generar dobles
-            </button>
-            <button class="admin-action-button admin-action-button-secondary" onclick="confirmSinglesGroupsFromAdmin()">
-              Confirmar grupos
-            </button>
-            <button class="admin-action-button admin-action-button-secondary" onclick="scheduleDoublesFinalFromAdmin()">
-              Programar final dobles
-            </button>
-            <button class="admin-action-button admin-action-button-secondary" onclick="runTickNowFromAdmin()">
-              Tick ahora
-            </button>
-            <button
-              id="admin-toggle-clock-button"
-              class="admin-action-button admin-action-button-secondary"
-              onclick="toggleClockTriggerFromAdmin()"
-            >
-              Pausar reloj
-            </button>
-            <button class="admin-action-button admin-action-button-danger" onclick="startDemoTournamentNowFromAdmin()">
-              Iniciar ahora
-            </button>
+          <div class="grid-stats" id="top-stats">
+            <div class="stat">
+              <div class="stat-label">Estado</div>
+              <div class="stat-value" id="stat-status">-</div>
+            </div>
+            <div class="stat">
+              <div class="stat-label">Bloque</div>
+              <div class="stat-value" id="stat-block">-</div>
+            </div>
+            <div class="stat">
+              <div class="stat-label">Fase</div>
+              <div class="stat-value" id="stat-phase">-</div>
+            </div>
+            <div class="stat">
+              <div class="stat-label">Actualizado</div>
+              <div class="stat-value" id="stat-updated">-</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="row-between" style="margin-bottom: 12px;">
+          <h2 class="section-title" style="margin: 0;">Partidos visibles</h2>
+          <div id="refresh-indicator" class="helper">Actualizacion automatica activada</div>
+        </div>
+
+        <div id="public-screen-content">
+          <div class="loading">Cargando partidos del bloque actual...</div>
+        </div>
+      </section>
+    </div>
+
+    <div class="app-screen" data-screen-panel="myday">
+      <section class="card">
+        <div class="row-between" style="margin-bottom: 12px; align-items: flex-end;">
+          <div>
+            <p class="subtitle">Vista personal</p>
+            <h2 class="section-title" style="margin: 0;">Mi jornada</h2>
+            <p class="helper" style="margin-top: 6px;">Consulta tu rol actual, compromiso del bloque y acceso rapido a captura.</p>
           </div>
         </div>
 
-        <div id="admin-action-feedback" class="helper" style="margin-top: 12px;"></div>
-      </div>
+        <div class="card-soft" style="margin-bottom: 12px;">
+          <div style="display: flex; align-items: end; gap: 12px; flex-wrap: wrap;">
+            <div style="flex: 1 1 100%; min-width: 0; width: 100%;">
+              <div class="stat-label" style="margin-bottom: 6px;">Selecciona tu nombre</div>
 
-      <div id="admin-control-content">
-        <div class="loading">Cargando panel de control...</div>
-      </div>
-    </section>
+              <select
+                id="my-player-select"
+                onchange="loadMyDayFromSelect(true)"
+                style="width: 100%; max-width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid #cbd5e1; font-size: 16px;"
+              >
+                <option value="">Cargando jugadores...</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div id="myday-content">
+          <div class="empty">Selecciona para ver tu jornada.</div>
+        </div>
+      </section>
+    </div>
+
+    <div class="app-screen" data-screen-panel="admin">
+      <section class="card">
+        <div class="row-between" style="margin-bottom: 12px; align-items: flex-end; flex-wrap: wrap;">
+          <div>
+            <p class="subtitle">Panel temporal</p>
+            <h2 class="section-title" style="margin: 0;">Control provisorio</h2>
+            <p class="helper" style="margin-top: 6px;">Panel temporal para reset, setup y simulacion de torneo.</p>
+          </div>
+
+          <button class="admin-action-button admin-action-button-secondary" onclick="loadAdminControl()">
+            Actualizar panel
+          </button>
+        </div>
+
+        <div class="card-soft" style="margin-bottom: 12px;">
+          <div class="admin-grid">
+            <div class="admin-field">
+              <div class="stat-label" style="margin-bottom: 6px;">Tournament start ts</div>
+              <input
+                id="admin-start-ts-input"
+                class="admin-text-input"
+                type="text"
+                placeholder="2026-04-18 13:20:00"
+              >
+              <div class="helper" style="margin-top: 6px;">Usa formato yyyy-mm-dd hh:mm:ss o el boton para usar la hora actual.</div>
+            </div>
+
+            <div class="admin-actions">
+              <button class="admin-action-button" onclick="saveTournamentStartTsFromAdmin()">
+                Guardar hora base
+              </button>
+              <button class="admin-action-button admin-action-button-secondary" onclick="setTournamentStartNowFromAdmin()">
+                Usar ahora
+              </button>
+              <button class="admin-action-button admin-action-button-secondary" onclick="initializeTournamentFlowV2FromAdmin()">
+                Reset V2
+              </button>
+              <button class="admin-action-button admin-action-button-secondary" onclick="seedDemoDoublesFromAdmin()">
+                Helper dobles demo
+              </button>
+              <button class="admin-action-button admin-action-button-secondary" onclick="generateInitialDoublesFromAdmin()">
+                Generar dobles
+              </button>
+              <button class="admin-action-button admin-action-button-secondary" onclick="confirmSinglesGroupsFromAdmin()">
+                Confirmar grupos
+              </button>
+              <button class="admin-action-button admin-action-button-secondary" onclick="scheduleDoublesFinalFromAdmin()">
+                Programar final dobles
+              </button>
+              <button class="admin-action-button admin-action-button-secondary" onclick="runTickNowFromAdmin()">
+                Tick ahora
+              </button>
+              <button
+                id="admin-toggle-clock-button"
+                class="admin-action-button admin-action-button-secondary"
+                onclick="toggleClockTriggerFromAdmin()"
+              >
+                Pausar reloj
+              </button>
+              <button class="admin-action-button admin-action-button-danger" onclick="startDemoTournamentNowFromAdmin()">
+                Iniciar ahora
+              </button>
+            </div>
+          </div>
+
+          <div id="admin-action-feedback" class="helper" style="margin-top: 12px;"></div>
+        </div>
+
+        <div id="admin-control-content">
+          <div class="loading">Cargando panel de control...</div>
+        </div>
+      </section>
+    </div>
   </div>
 </div>
