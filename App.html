@@ -14,6 +14,9 @@
         <button class="app-tab" type="button" data-screen-tab="myday" aria-selected="false" onclick="setActiveAppScreen('myday')">
           Mi jornada
         </button>
+        <button class="app-tab" type="button" data-screen-tab="doubles" aria-selected="false" onclick="setActiveAppScreen('doubles')">
+          Dobles
+        </button>
         <button class="app-tab" type="button" data-screen-tab="admin" aria-selected="false" onclick="setActiveAppScreen('admin')">
           Control
         </button>
@@ -92,6 +95,22 @@
 
         <div id="myday-content">
           <div class="empty">Selecciona para ver tu jornada.</div>
+        </div>
+      </section>
+    </div>
+
+    <div class="app-screen" data-screen-panel="doubles">
+      <section class="card">
+        <div class="row-between" style="margin-bottom: 12px; align-items: flex-end;">
+          <div>
+            <p class="subtitle">Configuracion previa</p>
+            <h2 class="section-title" style="margin: 0;">Partners dobles</h2>
+            <p class="helper" style="margin-top: 6px;">Confirma pareja, entra al pool o revisa el estado general antes del corte.</p>
+          </div>
+        </div>
+
+        <div id="doubles-config-content">
+          <div class="loading">Cargando configuracion de dobles...</div>
         </div>
       </section>
     </div>

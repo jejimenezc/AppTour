@@ -131,6 +131,194 @@ function getCheckedInPlayersForSelector() {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+function getDoublesConfigViewModel(selectedPlayerId) {
+  const tournamentStatus = String(getConfigValue('tournament_status') || '').trim();
+  const players = getPlayers();
+  const actorId = String(selectedPlayerId || '').trim();
+  const actor = actorId ? getPlayerById(actorId) : null;
+  const summary = getDoublesStatusSummary();
+  const validation = validateDoublesCut();
+
+  return {
+    tournamentStatus,
+    summary: {
+      eligible: Number(summary.eligible || 0),
+      pool: Number(summary.pool || 0),
+      pending: Number(summary.partner_pending || 0),
+      confirmed: Number(summary.partner_confirmed || 0),
+    },
+    playerOptions: players
+      .filter(player => isPlayerAvailableForDoublesWindow(player))
+      .map(player => ({
+        id: String(player.player_id || ''),
+        name: resolvePlayerFullName(player.player_id),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    actor: actor ? buildDoublesActorViewModel_(actor) : null,
+    rows: players
+      .filter(player => isPlayerAvailableForDoublesWindow(player))
+      .map(buildDoublesPlayerRowViewModel_)
+      .sort(compareDoublesRows_),
+    statusNote: buildDoublesStatusNote_(tournamentStatus, validation),
+    generatedAt: nowIso(),
+  };
+}
+
+function applyDoublesConfigActionFromUi(payload) {
+  const data = payload || {};
+  const action = String(data.action || '').trim();
+  const playerId = String(data.playerId || '').trim();
+  const targetPlayerId = String(data.targetPlayerId || '').trim();
+
+  if (!action) throw new Error('action requerida');
+
+  if (action === 'propose_partner') {
+    if (!playerId || !targetPlayerId) {
+      throw new Error('Debes elegir jugador y partner.');
+    }
+    proposePartner(playerId, targetPlayerId);
+    return getDoublesConfigViewModel(playerId);
+  }
+
+  if (!playerId) {
+    throw new Error('playerId requerido');
+  }
+
+  if (action === 'opt_into_pool') {
+    optIntoPool(playerId);
+    return getDoublesConfigViewModel(playerId);
+  }
+
+  if (action === 'decline_doubles') {
+    declineDoubles(playerId);
+    return getDoublesConfigViewModel(playerId);
+  }
+
+  if (action === 'confirm_partner') {
+    confirmPartner(playerId);
+    return getDoublesConfigViewModel(playerId);
+  }
+
+  if (action === 'reject_partner') {
+    rejectPartner(playerId);
+    return getDoublesConfigViewModel(playerId);
+  }
+
+  if (action === 'back_to_eligible') {
+    clearPlayerDoublesConfig(playerId, 'eligible');
+    return getDoublesConfigViewModel(playerId);
+  }
+
+  throw new Error(`Accion de dobles no soportada: ${action}`);
+}
+
+function buildDoublesActorViewModel_(player) {
+  const playerId = String(player.player_id || '').trim();
+  const status = String(player.doubles_status || '').trim();
+  const partnerId = String(player.doubles_partner_id || '').trim();
+  const requestTo = String(player.doubles_request_to || '').trim();
+  const requestFrom = String(player.doubles_request_from || '').trim();
+
+  return {
+    id: playerId,
+    name: resolvePlayerFullName(playerId),
+    status: status,
+    statusLabel: getDoublesStatusLabel_(status),
+    partnerLabel: partnerId ? resolvePlayerFullName(partnerId) : '',
+    requestToLabel: requestTo ? resolvePlayerFullName(requestTo) : '',
+    requestFromLabel: requestFrom ? resolvePlayerFullName(requestFrom) : '',
+    partnerOptions: getPartnerCandidateOptions_(playerId),
+    availableActions: {
+      canChoosePartner: status === 'eligible' || status === 'pool' || (status === 'partner_pending' && !!requestTo),
+      canOptIntoPool: status === 'eligible' || status === 'partner_pending',
+      canDecline: status !== 'blocked' && status !== 'partner_confirmed' && status !== 'opted_out',
+      canConfirmPartner: status === 'partner_pending' && !!requestFrom,
+      canRejectPartner: status === 'partner_pending' && !!requestFrom,
+      canResetToEligible: status === 'pool' || status === 'opted_out' || (status === 'partner_pending' && !!requestTo),
+    },
+  };
+}
+
+function buildDoublesPlayerRowViewModel_(player) {
+  const playerId = String(player.player_id || '').trim();
+  const status = String(player.doubles_status || '').trim();
+  const partnerId = String(player.doubles_partner_id || '').trim();
+  const requestTo = String(player.doubles_request_to || '').trim();
+  const requestFrom = String(player.doubles_request_from || '').trim();
+
+  let detail = 'Sin partner aun';
+  if (status === 'pool') detail = 'Asignacion automatica';
+  if (status === 'opted_out') detail = 'Declino competir en dobles';
+  if (status === 'partner_confirmed') detail = partnerId ? `Partner confirmado: ${resolvePlayerFullName(partnerId)}` : 'Partner confirmado';
+  if (status === 'partner_pending' && requestTo) detail = `Solicitud enviada a ${resolvePlayerFullName(requestTo)}`;
+  if (status === 'partner_pending' && requestFrom) detail = `Solicitud recibida de ${resolvePlayerFullName(requestFrom)}`;
+  if (status === 'blocked') detail = 'Fuera de la ventana de dobles';
+
+  return {
+    id: playerId,
+    name: resolvePlayerFullName(playerId),
+    status,
+    statusLabel: getDoublesStatusLabel_(status),
+    detail,
+  };
+}
+
+function getPartnerCandidateOptions_(playerId) {
+  return getPlayers()
+    .filter(player => {
+      const candidateId = String(player.player_id || '').trim();
+      const status = String(player.doubles_status || '').trim();
+
+      if (!candidateId || candidateId === String(playerId)) return false;
+      if (!isPlayerAvailableForDoublesWindow(player)) return false;
+      return status !== 'partner_confirmed' && status !== 'opted_out';
+    })
+    .map(player => ({
+      id: String(player.player_id || ''),
+      name: resolvePlayerFullName(player.player_id),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function getDoublesStatusLabel_(status) {
+  if (status === 'eligible') return 'Disponible';
+  if (status === 'pool') return 'Pool';
+  if (status === 'partner_pending') return 'Pendiente';
+  if (status === 'partner_confirmed') return 'Confirmado';
+  if (status === 'opted_out') return 'Declino';
+  if (status === 'blocked') return 'Bloqueado';
+  return status || 'Sin estado';
+}
+
+function buildDoublesStatusNote_(tournamentStatus, validation) {
+  if (tournamentStatus !== 'awaiting_doubles_confirmation') {
+    return 'La ventana de dobles aun no esta abierta. Puedes revisar el estado, pero algunas acciones podrian no estar disponibles segun el flujo.';
+  }
+
+  if (!validation.ok) {
+    return validation.errors.join(' ');
+  }
+
+  return 'El cuadro se genera al corte usando parejas confirmadas y jugadores en pool. Si el pool es impar, no se puede generar dobles.';
+}
+
+function compareDoublesRows_(a, b) {
+  const priority = {
+    partner_confirmed: 0,
+    partner_pending: 1,
+    pool: 2,
+    eligible: 3,
+    opted_out: 4,
+    blocked: 5,
+  };
+
+  const priorityA = Object.prototype.hasOwnProperty.call(priority, a.status) ? priority[a.status] : 99;
+  const priorityB = Object.prototype.hasOwnProperty.call(priority, b.status) ? priority[b.status] : 99;
+
+  if (priorityA !== priorityB) return priorityA - priorityB;
+  return String(a.name || '').localeCompare(String(b.name || ''));
+}
+
 function buildMyDayTimeline(playerId, currentBlock) {
   const currentBlockId = currentBlock ? Number(currentBlock.block_id || 0) : 0;
   const blocks = getBlocksSorted();

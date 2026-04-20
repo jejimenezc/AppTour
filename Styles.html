@@ -74,7 +74,7 @@
 
   .app-tabbar {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 10px;
     width: 100%;
   }
@@ -108,6 +108,51 @@
 
   .app-screen > .card + .card {
     margin-top: 14px;
+  }
+
+  .doubles-summary-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .doubles-select {
+    width: 100%;
+    max-width: 100%;
+    min-height: 48px;
+    padding: 12px 14px;
+    border-radius: 14px;
+    border: 1px solid #cbd5e1;
+    background: #ffffff;
+    color: #0f172a;
+    font-size: 16px;
+  }
+
+  .doubles-actions-grid {
+    display: grid;
+    gap: 10px;
+  }
+
+  .doubles-action-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+  }
+
+  .doubles-row-card {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: #ffffff;
+  }
+
+  .doubles-row-name {
+    font-size: 16px;
+    font-weight: 700;
+    line-height: 1.3;
   }
 
   .header-row,
@@ -677,10 +722,20 @@
     }
 
     .grid-stats,
+    .doubles-summary-grid,
     .admin-summary-grid,
     .admin-actions,
     .admin-kv {
       grid-template-columns: 1fr;
+    }
+
+    .doubles-action-row {
+      grid-template-columns: 1fr;
+    }
+
+    .doubles-row-card {
+      flex-direction: column;
+      align-items: flex-start;
     }
 
     .stat {
