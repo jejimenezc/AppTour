@@ -196,6 +196,7 @@ function buildPartidosFirebasePayload_(publicVm) {
   return {
     tournamentStatus: String(vm.tournamentStatus || '').trim(),
     currentBlock: vm.currentBlock || null,
+    clock: vm.clock || null,
     generatedAt: String(vm.generatedAt || '').trim(),
     source: 'gas',
     matches: matches.map(function (match) {

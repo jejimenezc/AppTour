@@ -327,29 +327,64 @@ function createInitialDoublesBlock() {
 }
 
 /**
- * Setup completo de dobles al corte.
+ * Genera el fixture inicial de dobles al corte, sin programar bloques.
  *
  * En V2 ya NO depende de finalistas de singles.
  *
  * @returns {number|null}
  */
-function setupDoublesStageFromCut() {
+function generateDoublesFixtureFromCut() {
   const existingDoubles = getMatches().filter(m => String(m.phase_type) === 'doubles');
   if (existingDoubles.length > 0) {
-    const latestBlock = getBlocksSorted().slice(-1)[0];
-    return latestBlock ? latestBlock.block_id : null;
+    return existingDoubles.length;
   }
 
   const teams = generateDoublesTeamsAtCut();
   const matchups = buildInitialDoublesMatchups(teams);
 
   generateInitialDoublesMatches(matchups);
-  const blockId = createInitialDoublesBlock();
+  setConfigValue('tournament_status', 'doubles_fixture_ready', 'Fixture inicial de dobles listo para programar');
+  setConfigValue('current_block_id', '', 'Sin bloque activo hasta programar torneo');
 
-  setConfigValue('tournament_status', 'running_doubles', 'Dobles generado al cierre de la ventana');
-  if (blockId) {
-    setConfigValue('current_block_id', blockId, 'Bloque actual');
+  return matchups.length;
+}
+
+/**
+ * Programa el bloque inicial de dobles sin iniciar aun el torneo.
+ *
+ * @returns {number|null}
+ */
+function scheduleInitialDoublesTournament() {
+  const existingBlock = getBlocksSorted().find(block => String(block.phase_type || '') === 'doubles');
+  if (existingBlock) {
+    setConfigValue('current_block_id', existingBlock.block_id, 'Bloque actual programado');
+    setConfigValue('tournament_status', 'doubles_scheduled', 'Dobles programado y pendiente de inicio logico');
+    return existingBlock.block_id;
   }
 
+  const pendingDoubles = getMatches().filter(match =>
+    String(match.phase_type || '') === 'doubles' &&
+    String(match.block_id || '') === ''
+  );
+  if (!pendingDoubles.length) {
+    return null;
+  }
+
+  const blockId = createInitialDoublesBlock();
+  if (blockId) {
+    setConfigValue('current_block_id', blockId, 'Bloque actual programado');
+  }
+  setConfigValue('tournament_status', 'doubles_scheduled', 'Dobles programado y pendiente de inicio logico');
+
   return blockId;
+}
+
+/**
+ * Compat: genera fixture y programa el torneo en un solo paso.
+ *
+ * @returns {number|null}
+ */
+function setupDoublesStageFromCut() {
+  generateDoublesFixtureFromCut();
+  return scheduleInitialDoublesTournament();
 }

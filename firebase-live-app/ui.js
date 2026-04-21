@@ -30,6 +30,7 @@ function getPublicViewModel() {
 
   return {
     tournamentStatus: status,
+    clock: buildTournamentClockPayload_(),
     currentBlock: currentBlock
       ? {
           id: currentBlock.block_id,
@@ -530,6 +531,14 @@ function getDoublesStatusLabel_(status) {
 }
 
 function buildDoublesStatusNote_(tournamentStatus, validation) {
+  if (tournamentStatus === 'doubles_fixture_ready') {
+    return 'El fixture inicial ya esta montado. El siguiente paso es programar el torneo con el cronometro pausado en 00:00:00.';
+  }
+
+  if (tournamentStatus === 'doubles_scheduled') {
+    return 'Los bloques iniciales ya estan programados y en scheduled. Inicia el cronometro para comenzar el torneo.';
+  }
+
   if (tournamentStatus !== 'awaiting_doubles_confirmation') {
     return 'La ventana de dobles aun no esta abierta. Puedes revisar el estado, pero algunas acciones podrian no estar disponibles segun el flujo.';
   }
@@ -690,6 +699,7 @@ function getAdminControlViewModel() {
     tournamentStatus: tournamentStatus,
     tournamentStartTs: clock.tournamentStartTs,
     internalClockNowTs: clock.internalNowTs,
+    realNowTs: clock.realNowTs,
     clockHealth: clock.clockHealth,
     clockHealthMessage: clock.clockHealthMessage,
     timeZone: getTimeZoneDiagnostics(),
@@ -749,25 +759,46 @@ function setTournamentStartNowFromUi() {
 
 function initializeTournamentFlowV2FromUi() {
   initializeTournamentFlowV2();
-  return publishRealtimeSnapshotAfterMutation_(getAdminControlViewModel());
+  const vm = getAdminControlViewModel();
+  vm.lastActionMessage = 'Reset V2 aplicado. Base limpia, ventana de dobles abierta y cronometro pausado en 00:00:00.';
+  return publishRealtimeSnapshotAfterMutation_(vm);
 }
 
 function seedDemoDoublesConfigFromUi() {
   seedDemoDoublesConfiguration_();
-  return publishRealtimeSnapshotAfterMutation_(getAdminControlViewModel());
+  const vm = getAdminControlViewModel();
+  vm.lastActionMessage = 'Parejas demo generadas. El siguiente paso es montar el fixture de dobles.';
+  return publishRealtimeSnapshotAfterMutation_(vm);
 }
 
-function setupDoublesStageFromUi() {
+function generateDoublesFixtureFromUi() {
   const validation = validateDoublesCut();
   if (!validation.ok) {
     throw new Error(validation.errors.join(' '));
   }
 
-  const blockId = setupDoublesStageFromCut();
+  const matchCount = generateDoublesFixtureFromCut();
   const vm = getAdminControlViewModel();
-  vm.lastActionMessage = blockId
-    ? `Bloque inicial de dobles generado: ${blockId}`
-    : 'No se genero un bloque de dobles.';
+  vm.lastActionMessage = matchCount
+    ? `Fixture de dobles generado con ${matchCount} partidos. Ahora puedes programar el torneo.`
+    : 'El fixture de dobles ya estaba generado.';
+  return publishRealtimeSnapshotAfterMutation_(vm);
+}
+
+function programDoublesTournamentFromUi() {
+  const blockId = scheduleInitialDoublesTournament();
+  if (!blockId) {
+    throw new Error('No hay fixture de dobles pendiente para programar.');
+  }
+
+  removeTournamentClockTriggers();
+  resetTournamentInternalClock();
+  pauseTournamentInternalClock();
+  setConfigValue('clock_trigger_last_run_at', '', 'Ultima ejecucion del reloj');
+  setConfigValue('clock_trigger_last_error', '', 'Ultimo error del reloj');
+
+  const vm = getAdminControlViewModel();
+  vm.lastActionMessage = `Torneo programado. Bloque ${blockId} queda scheduled con cronometro en 00:00:00 y pausado.`;
   return publishRealtimeSnapshotAfterMutation_(vm);
 }
 
@@ -794,13 +825,14 @@ function setClockTriggerEnabledFromUi(enabled) {
     } else {
       setConfigValue('clock_trigger_enabled', true, 'Habilita el trigger automatico del reloj');
     }
+    runTournamentClockManualTick();
   } else {
     pauseTournamentInternalClock();
     removeTournamentClockTriggers();
   }
 
   const vm = getAdminControlViewModel();
-  vm.lastActionMessage = nextValue ? 'Reloj automatico reanudado.' : 'Reloj automatico pausado.';
+  vm.lastActionMessage = nextValue ? 'Cronometro iniciado. El bloque programado avanza segun el tick.' : 'Cronometro pausado.';
   return publishRealtimeSnapshotAfterMutation_(vm);
 }
 

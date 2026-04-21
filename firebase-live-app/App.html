@@ -5,6 +5,9 @@
         <p class="subtitle">Torneo tenis de mesa</p>
         <h1 class="title">AppTour</h1>
         <p class="helper">Una sola vista operativa a la vez, pensada para usar el campeonato en la mano.</p>
+        <div class="helper" id="app-clock-header" style="margin-top: 8px;">
+          Cronometro del torneo: --:--:-- | Estado: sin snapshot | Hora interna: -
+        </div>
       </div>
 
       <div class="app-tabbar" role="tablist" aria-label="Pantallas de AppTour">
@@ -165,19 +168,19 @@
         <div class="card-soft" style="margin-bottom: 12px;">
           <div class="admin-grid">
             <div class="admin-field">
-              <div class="stat-label" style="margin-bottom: 6px;">Tournament start ts</div>
+              <div class="stat-label" style="margin-bottom: 6px;">Ancla del torneo</div>
               <input
                 id="admin-start-ts-input"
                 class="admin-text-input"
                 type="text"
                 placeholder="2026-04-18 13:20:00"
               >
-              <div class="helper" style="margin-top: 6px;">Usa formato yyyy-mm-dd hh:mm:ss o el boton para usar la hora actual.</div>
+              <div class="helper" style="margin-top: 6px;">Define la hora base logica usada para programar bloques. El cronometro corre por separado.</div>
             </div>
 
             <div class="admin-actions">
               <button class="admin-action-button" onclick="saveTournamentStartTsFromAdmin()">
-                Guardar hora base
+                Guardar ancla
               </button>
               <button class="admin-action-button admin-action-button-secondary" onclick="setTournamentStartNowFromAdmin()">
                 Usar ahora
@@ -190,6 +193,9 @@
               </button>
               <button class="admin-action-button admin-action-button-secondary" onclick="generateInitialDoublesFromAdmin()">
                 Generar dobles
+              </button>
+              <button class="admin-action-button admin-action-button-secondary" onclick="programDoublesTournamentFromAdmin()">
+                Programar torneo
               </button>
               <button class="admin-action-button admin-action-button-secondary" onclick="confirmSinglesGroupsFromAdmin()">
                 Confirmar grupos
@@ -205,10 +211,7 @@
                 class="admin-action-button admin-action-button-secondary"
                 onclick="toggleClockTriggerFromAdmin()"
               >
-                Pausar reloj
-              </button>
-              <button class="admin-action-button admin-action-button-danger" onclick="startDemoTournamentNowFromAdmin()">
-                Iniciar ahora
+                Iniciar cronometro
               </button>
             </div>
           </div>

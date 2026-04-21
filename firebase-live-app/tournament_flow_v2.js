@@ -4,7 +4,11 @@
  * - grupos después
  */
 function initializeTournamentFlowV2() {
+  removeTournamentClockTriggers();
   resetTournamentInternalClock();
+  pauseTournamentInternalClock();
+  setConfigValue('clock_trigger_last_run_at', '', 'Ultima ejecucion del reloj');
+  setConfigValue('clock_trigger_last_error', '', 'Ultimo error del reloj');
   resetTournamentFlowV2();
   openDoublesConfirmationWindow();
   setConfigValue('tournament_status', 'awaiting_doubles_confirmation', 'Ventana de dobles abierta');
