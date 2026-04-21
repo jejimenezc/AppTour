@@ -195,10 +195,8 @@
       .withSuccessHandler(function (vm) {
         publicLoadInFlight = false;
         publicLastSuccessAt = new Date();
-        renderPublicScreen(vm);
-        if (lastRealtimeMatches.length) {
-          applyRealtimeMatchesToViews(lastRealtimeMatches, { preserveGeneratedAt: true });
-        }
+        const realtimeVm = buildRealtimePublicVmIfFresh_(vm);
+        renderPublicScreen(realtimeVm || vm);
         setRefreshIndicator(buildRefreshIndicatorText());
       })
       .withFailureHandler(function (error) {
@@ -213,7 +211,20 @@
     currentPublicVm = vm;
     updateAppHeaderClockSnapshot(vm && vm.clock ? vm.clock : null);
     renderTopStats(vm);
+    renderPublicDebug(vm);
     renderPublicMatches(vm);
+  }
+
+  function renderPublicDebug(vm) {
+    const root = document.getElementById('public-debug-indicator');
+    if (!root) return;
+
+    const snapshotVersion = getSnapshotVersion_(vm && (vm.snapshotVersion || vm.generatedAt)) || '-';
+    const internalNowTs = vm && vm.clock ? String(vm.clock.internalNowTs || '').trim() : '';
+    const blockStatus = vm && vm.currentBlock ? String(vm.currentBlock.status || '').trim() : '';
+    const generatedAt = vm ? String(vm.generatedAt || '').trim() : '';
+
+    root.textContent = `snapshot ${snapshotVersion} | interna ${internalNowTs || '-'} | bloque ${blockStatus || '-'} | payload ${generatedAt || '-'}`;
   }
 
   function initializeFirebaseRealtime() {
@@ -245,6 +256,11 @@
     realtimeMatchesRef.on('value', function (snapshot) {
       lastRealtimePayload = snapshot ? snapshot.val() : null;
       lastRealtimeMatches = normalizeRealtimeMatchesPayload(lastRealtimePayload);
+      const realtimeMeta = extractRealtimePublicMeta(lastRealtimePayload);
+      if (!shouldApplyRealtimePublicMeta_(realtimeMeta, currentPublicVm)) {
+        setRefreshIndicator('Esperando snapshot realtime mas reciente...');
+        return;
+      }
       applyRealtimeMatchesToViews(lastRealtimeMatches);
       setRefreshIndicator('Sincronizado en tiempo real');
     }, function (error) {
@@ -364,6 +380,9 @@
     const opts = options || {};
     const safeMatches = Array.isArray(matches) ? matches.slice() : [];
     const nextPublicVm = buildPublicVmFromRealtimeMatches(safeMatches, opts);
+    if (!shouldApplyRealtimePublicMeta_(extractRealtimePublicMeta(lastRealtimePayload), currentPublicVm)) {
+      return;
+    }
 
     renderPublicScreen(nextPublicVm);
     syncRealtimeMatchIntoMyDay(safeMatches, nextPublicVm);
@@ -383,6 +402,7 @@
       clock: realtimeMeta.clock || baseVm.clock || null,
       matches: matches,
       generatedAt: generatedAt,
+      snapshotVersion: realtimeMeta.snapshotVersion || generatedAt,
     };
   }
 
@@ -392,6 +412,7 @@
         tournamentStatus: '',
         currentBlock: null,
         generatedAt: '',
+        snapshotVersion: '',
       };
     }
 
@@ -403,17 +424,45 @@
       tournamentStatus: String(source.tournamentStatus || '').trim(),
       currentBlock: source.currentBlock || null,
       generatedAt: String(source.generatedAt || '').trim(),
+      snapshotVersion: String(source.snapshotVersion || source.generatedAt || '').trim(),
       clock: source.clock || null,
+      source: String(source.source || '').trim(),
     };
+  }
+
+  function buildRealtimePublicVmIfFresh_(baseVm) {
+    if (!lastRealtimeMatches.length && !lastRealtimePayload) {
+      return null;
+    }
+
+    const realtimeMeta = extractRealtimePublicMeta(lastRealtimePayload);
+    if (!shouldApplyRealtimePublicMeta_(realtimeMeta, baseVm)) {
+      return null;
+    }
+
+    return buildPublicVmFromRealtimeMatches(lastRealtimeMatches, {});
+  }
+
+  function shouldApplyRealtimePublicMeta_(realtimeMeta, baseVm) {
+    const nextVersion = getSnapshotVersion_(realtimeMeta && (realtimeMeta.snapshotVersion || realtimeMeta.generatedAt));
+    const baseVersion = getSnapshotVersion_(baseVm && (baseVm.snapshotVersion || baseVm.generatedAt));
+
+    if (!nextVersion) return true;
+    if (!baseVersion) return true;
+    return nextVersion >= baseVersion;
+  }
+
+  function getSnapshotVersion_(value) {
+    return String(value || '').trim();
   }
 
   function updateAppHeaderClockSnapshot(clock) {
     if (!clock) return;
 
     appHeaderClockSnapshot = {
-      capturedAtMs: Date.now(),
       tournamentStartMs: parseCanonicalDateTime(clock.tournamentStartTs),
       internalNowMs: parseCanonicalDateTime(clock.internalNowTs),
+      realNowMs: parseCanonicalDateTime(clock.realNowTs),
       internalNowTs: String(clock.internalNowTs || '').trim(),
       isRunning: !!clock.isRunning,
       health: String(clock.clockHealth || 'ok'),
@@ -434,8 +483,7 @@
       return;
     }
 
-    const elapsedClientMs = Date.now() - snapshot.capturedAtMs;
-    const internalNowMs = snapshot.internalNowMs + (snapshot.isRunning ? elapsedClientMs : 0);
+    const internalNowMs = snapshot.internalNowMs;
     const elapsedSinceStartMs = Math.max(0, internalNowMs - snapshot.tournamentStartMs);
     const runningLabel = snapshot.isRunning ? 'corriendo' : 'pausado';
     const healthSuffix = snapshot.health && snapshot.health !== 'ok' ? ` | ${snapshot.healthMessage || snapshot.health}` : '';
@@ -1244,8 +1292,10 @@
       tournamentStartTs: vm.tournamentStartTs,
       internalNowTs: vm.internalClockNowTs,
       realNowTs: vm.realNowTs,
-      isRunning: vm.trigger ? !!vm.trigger.enabled : false,
+      isRunning: !!vm.clockIsRunning,
+      lastResumeRealTs: vm.clockLastResumeRealTs,
       triggerLastRunAt: vm.trigger ? vm.trigger.lastRunAt : '',
+      lastProcessedInternalTs: vm.clockLastProcessedInternalTs,
       clockHealth: vm.clockHealth,
       clockHealthMessage: vm.clockHealthMessage,
     } : null);
@@ -1306,6 +1356,12 @@
             <div class="admin-code">${escapeHtml(vm.internalClockNowTs || '-')}</div>
             <div class="admin-kv-label">Hora real</div>
             <div class="admin-code">${escapeHtml(vm.realNowTs || '-')}</div>
+            <div class="admin-kv-label">Cronometro</div>
+            <div class="admin-code">${escapeHtml(formatElapsedClock(vm.clockElapsedMs || 0))}</div>
+            <div class="admin-kv-label">Ultima reanudacion</div>
+            <div class="admin-code">${escapeHtml(vm.clockLastResumeRealTs || '-')}</div>
+            <div class="admin-kv-label">Motor procesado</div>
+            <div class="admin-code">${escapeHtml(vm.clockLastProcessedInternalTs || '-')}</div>
             <div class="admin-kv-label">Duracion bloque</div>
             <div class="admin-code">${escapeHtml(vm.timing.totalMinutes || 0)} min (${escapeHtml(vm.timing.playMinutes || 0)} juego / ${escapeHtml(vm.timing.closeMinutes || 0)} cierre / ${escapeHtml(vm.timing.transitionMinutes || 0)} transicion)</div>
             <div class="admin-kv-label">App TZ</div>
@@ -1349,15 +1405,23 @@
             <div class="admin-kv-label">Pool</div>
             <div class="admin-code">${escapeHtml(vm.doublesSummary.pool || 0)}</div>
             <div class="admin-kv-label">Cronometro corriendo</div>
-            <div class="admin-code">${escapeHtml(vm.trigger.enabled ? 'TRUE' : 'FALSE')}</div>
+            <div class="admin-code">${escapeHtml(vm.clockIsRunning ? 'TRUE' : 'FALSE')}</div>
             <div class="admin-kv-label">Trigger count</div>
             <div class="admin-code">${escapeHtml(vm.trigger.triggerCount || 0)}</div>
             <div class="admin-kv-label">Ultimo tick</div>
             <div class="admin-code">${escapeHtml(vm.trigger.lastRunAt || '-')}</div>
+            <div class="admin-kv-label">Ultimo publish</div>
+            <div class="admin-code">${escapeHtml(vm.publish && vm.publish.lastRunAt || '-')}</div>
+            <div class="admin-kv-label">Estado publish</div>
+            <div class="admin-code">${escapeHtml(vm.publish && vm.publish.lastStatus || '-')}</div>
+            <div class="admin-kv-label">Version publicada</div>
+            <div class="admin-code">${escapeHtml(vm.publish && vm.publish.lastSnapshotVersion || '-')}</div>
             <div class="admin-kv-label">Sheet / Script TZ</div>
             <div class="admin-code">${escapeHtml(vm.timeZone ? `${vm.timeZone.spreadsheetTimeZone || '-'} / ${vm.timeZone.scriptTimeZone || '-'}` : '-')}</div>
             <div class="admin-kv-label">Ultimo error</div>
             <div class="admin-code">${escapeHtml(vm.trigger.lastError || '-')}</div>
+            <div class="admin-kv-label">Error publish</div>
+            <div class="admin-code">${escapeHtml(vm.publish && vm.publish.lastError || '-')}</div>
             <div class="admin-kv-label">Confirmar grupos</div>
             <div class="admin-code">${escapeHtml(vm.checkpoints.canConfirmGroups ? 'Disponible' : 'No aplica')}</div>
             <div class="admin-kv-label">Final dobles</div>
@@ -1465,7 +1529,7 @@
   }
 
   function toggleClockTriggerFromAdmin() {
-    const enabled = currentAdminVm && currentAdminVm.trigger ? !!currentAdminVm.trigger.enabled : false;
+    const enabled = !!(currentAdminVm && currentAdminVm.clockIsRunning);
     const nextValue = !enabled;
     runAdminAction(nextValue ? 'Iniciando cronometro...' : 'Pausando cronometro...', '', function () {
       google.script.run
@@ -1511,7 +1575,7 @@
   function updateAdminToggleClockButton(vm) {
     const button = document.getElementById('admin-toggle-clock-button');
     if (!button) return;
-    const enabled = vm && vm.trigger ? !!vm.trigger.enabled : false;
+    const enabled = !!(vm && vm.clockIsRunning);
     button.textContent = enabled ? 'Pausar cronometro' : 'Iniciar cronometro';
   }
 
@@ -1737,7 +1801,6 @@
       isRunning: !!(vm && vm.clock && vm.clock.isRunning),
       health: String(vm && vm.clock && vm.clock.clockHealth || 'ok'),
       healthMessage: String(vm && vm.clock && vm.clock.clockHealthMessage || ''),
-      clientCapturedAtMs: Date.now(),
       lastExpectedStatus: '',
     };
     renderMyDayDoublesEntryCard();
@@ -1921,10 +1984,9 @@
       return;
     }
 
-    const elapsedClientMs = Date.now() - snapshot.clientCapturedAtMs;
-    const internalNowMs = snapshot.internalNowMs + (snapshot.isRunning ? elapsedClientMs : 0);
+    const internalNowMs = snapshot.internalNowMs;
     const tournamentStartMs = parseCanonicalDateTime(vm.clock && vm.clock.tournamentStartTs);
-    const realNowMs = snapshot.realNowMs ? snapshot.realNowMs + elapsedClientMs : Date.now();
+    const realNowMs = snapshot.realNowMs || Date.now();
     const currentBlock = vm.currentBlock || null;
     const beforeTournamentStart = !!tournamentStartMs && internalNowMs < tournamentStartMs;
     const expectedStatus = getExpectedBlockStatus(currentBlock, internalNowMs);
@@ -1998,10 +2060,6 @@
 
     if (currentBlock && (forceRefreshCheck || expectedStatus !== snapshot.lastExpectedStatus)) {
       snapshot.lastExpectedStatus = expectedStatus;
-
-      if (!forceRefreshCheck && drifted) {
-        refreshCurrentPlayerExperience({ silent: true });
-      }
     }
   }
 

@@ -6,35 +6,53 @@ function publishPartidosToFirebase() {
 }
 
 function publishRealtimeSnapshotToFirebase() {
-  const snapshot = buildRealtimeSnapshotPayload_();
-  const publicResponse = writeFirebaseNode_('partidos', snapshot.partidos);
-  const systemResponse = writeFirebaseNode_('system', snapshot.system);
+  const attemptAt = nowIso();
+  setConfigValue('clock_publish_last_run_at', attemptAt, 'Ultimo intento de publish realtime');
 
-  return {
-    ok: true,
-    generatedAt: snapshot.system.lastPublishedAt,
-    tournamentStatus: snapshot.system.tournamentStatus,
-    currentBlockId: snapshot.system.currentBlock ? snapshot.system.currentBlock.id : '',
-    publishedMatches: snapshot.partidos.matches.length,
-    statusCodes: {
-      partidos: publicResponse.statusCode,
-      system: systemResponse.statusCode,
-    },
-  };
+  try {
+    const snapshot = buildRealtimeSnapshotPayload_();
+    const publicResponse = writeFirebaseNode_('partidos', snapshot.partidos);
+    const systemResponse = writeFirebaseNode_('system', snapshot.system);
+
+    setConfigValue('clock_publish_last_status', 'ok', 'Estado del ultimo publish realtime');
+    setConfigValue('clock_publish_last_error', '', 'Ultimo error del publish realtime');
+    setConfigValue('clock_publish_last_snapshot_version', snapshot.system.snapshotVersion, 'Ultima version publicada en realtime');
+
+    return {
+      ok: true,
+      generatedAt: snapshot.system.lastPublishedAt,
+      snapshotVersion: snapshot.system.snapshotVersion,
+      tournamentStatus: snapshot.system.tournamentStatus,
+      currentBlockId: snapshot.system.currentBlock ? snapshot.system.currentBlock.id : '',
+      publishedMatches: snapshot.partidos.matches.length,
+      statusCodes: {
+        partidos: publicResponse.statusCode,
+        system: systemResponse.statusCode,
+      },
+    };
+  } catch (error) {
+    const message = error && error.message ? error.message : String(error);
+    setConfigValue('clock_publish_last_status', 'error', 'Estado del ultimo publish realtime');
+    setConfigValue('clock_publish_last_error', message, 'Ultimo error del publish realtime');
+    throw error;
+  }
 }
 
 function buildRealtimeSnapshotPayload_() {
   const publicVm = getPublicViewModel();
-  const generatedAt = nowIso();
+  const generatedAt = String(publicVm.generatedAt || nowIso()).trim();
+  const snapshotVersion = String(publicVm.snapshotVersion || Date.now());
+  const clock = buildTournamentClockPayload_();
 
   return {
     partidos: buildPartidosFirebasePayload_(publicVm),
     system: {
       tournamentStatus: String(publicVm.tournamentStatus || '').trim(),
       currentBlock: publicVm.currentBlock || null,
-      clock: buildTournamentClockPayload_(),
-      snapshotVersion: generatedAt,
+      clock: clock,
+      snapshotVersion: snapshotVersion,
       lastPublishedAt: generatedAt,
+      processedAtInternal: String(clock.lastProcessedInternalTs || clock.internalNowTs || '').trim(),
       source: 'gas',
     },
   };
@@ -198,6 +216,7 @@ function buildPartidosFirebasePayload_(publicVm) {
     currentBlock: vm.currentBlock || null,
     clock: vm.clock || null,
     generatedAt: String(vm.generatedAt || '').trim(),
+    snapshotVersion: String(vm.snapshotVersion || vm.generatedAt || '').trim(),
     source: 'gas',
     matches: matches.map(function (match) {
       return {

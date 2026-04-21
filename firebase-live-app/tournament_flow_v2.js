@@ -9,6 +9,11 @@ function initializeTournamentFlowV2() {
   pauseTournamentInternalClock();
   setConfigValue('clock_trigger_last_run_at', '', 'Ultima ejecucion del reloj');
   setConfigValue('clock_trigger_last_error', '', 'Ultimo error del reloj');
+  setConfigValue('clock_last_processed_internal_ts', '', 'Ultimo tiempo interno procesado por el motor');
+  setConfigValue('clock_publish_last_run_at', '', 'Ultimo intento de publish realtime');
+  setConfigValue('clock_publish_last_status', '', 'Estado del ultimo publish realtime');
+  setConfigValue('clock_publish_last_error', '', 'Ultimo error del publish realtime');
+  setConfigValue('clock_publish_last_snapshot_version', '', 'Ultima version publicada en realtime');
   resetTournamentFlowV2();
   openDoublesConfirmationWindow();
   setConfigValue('tournament_status', 'awaiting_doubles_confirmation', 'Ventana de dobles abierta');

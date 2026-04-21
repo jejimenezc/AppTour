@@ -19,6 +19,8 @@ function getPublicViewModel() {
   const currentBlock = getCurrentBlock();
   const currentBlockId = currentBlock ? currentBlock.block_id : '';
   const currentMatches = currentBlockId ? getMatchesByBlock(currentBlockId) : [];
+  const generatedAt = nowIso();
+  const snapshotVersion = String(Date.now());
 
   const matches = currentMatches
     .filter(match => {
@@ -26,7 +28,7 @@ function getPublicViewModel() {
       return phase === 'doubles' || phase === 'groups' || phase === 'singles';
     })
     .sort((a, b) => Number(a.table_no || 999) - Number(b.table_no || 999))
-    .map(match => mapMatchForPublicView(match));
+    .map(match => mapMatchForPublicView(match, currentBlock));
 
   return {
     tournamentStatus: status,
@@ -44,7 +46,8 @@ function getPublicViewModel() {
         }
       : null,
     matches,
-    generatedAt: nowIso(),
+    generatedAt: generatedAt,
+    snapshotVersion: snapshotVersion,
   };
 }
 
@@ -55,8 +58,11 @@ function buildTournamentClockPayload_() {
     tournamentStartTs: normalizeDateTimeText(clockState.startTs),
     internalNowTs: normalizeDateTimeText(clockState.internalNowTs),
     realNowTs: normalizeDateTimeText(clockState.realNowTs || nowIso()),
+    elapsedMs: Number(clockState.elapsedMs || 0),
     isRunning: !!clockState.isRunning,
+    lastResumeRealTs: normalizeDateTimeText(clockState.lastResumeRealTs),
     triggerLastRunAt: normalizeDateTimeText(getConfigValue('clock_trigger_last_run_at')),
+    lastProcessedInternalTs: normalizeDateTimeText(getConfigValue('clock_last_processed_internal_ts')),
     clockHealth: String(clockState.health || 'ok'),
     clockHealthMessage: String(clockState.healthMessage || ''),
   };
@@ -700,6 +706,10 @@ function getAdminControlViewModel() {
     tournamentStartTs: clock.tournamentStartTs,
     internalClockNowTs: clock.internalNowTs,
     realNowTs: clock.realNowTs,
+    clockElapsedMs: Number(clock.elapsedMs || 0),
+    clockIsRunning: !!clock.isRunning,
+    clockLastResumeRealTs: clock.lastResumeRealTs,
+    clockLastProcessedInternalTs: clock.lastProcessedInternalTs,
     clockHealth: clock.clockHealth,
     clockHealthMessage: clock.clockHealthMessage,
     timeZone: getTimeZoneDiagnostics(),
@@ -735,6 +745,12 @@ function getAdminControlViewModel() {
     },
     doublesSummary: doublesSummary,
     trigger: triggerStatus,
+    publish: {
+      lastRunAt: normalizeDateTimeText(getConfigValue('clock_publish_last_run_at')),
+      lastStatus: String(getConfigValue('clock_publish_last_status') || '').trim(),
+      lastError: String(getConfigValue('clock_publish_last_error') || '').trim(),
+      lastSnapshotVersion: String(getConfigValue('clock_publish_last_snapshot_version') || '').trim(),
+    },
     checkpoints: {
       canConfirmGroups: canConfirmGroups,
       canScheduleDoublesFinal: canScheduleDoublesFinal,
@@ -796,6 +812,11 @@ function programDoublesTournamentFromUi() {
   pauseTournamentInternalClock();
   setConfigValue('clock_trigger_last_run_at', '', 'Ultima ejecucion del reloj');
   setConfigValue('clock_trigger_last_error', '', 'Ultimo error del reloj');
+  setConfigValue('clock_last_processed_internal_ts', '', 'Ultimo tiempo interno procesado por el motor');
+  setConfigValue('clock_publish_last_run_at', '', 'Ultimo intento de publish realtime');
+  setConfigValue('clock_publish_last_status', '', 'Estado del ultimo publish realtime');
+  setConfigValue('clock_publish_last_error', '', 'Ultimo error del publish realtime');
+  setConfigValue('clock_publish_last_snapshot_version', '', 'Ultima version publicada en realtime');
 
   const vm = getAdminControlViewModel();
   vm.lastActionMessage = `Torneo programado. Bloque ${blockId} queda scheduled con cronometro en 00:00:00 y pausado.`;
@@ -810,12 +831,12 @@ function runTournamentClockNowFromUi() {
 }
 
 function syncTournamentClockHeartbeatFromUi() {
-  runTournamentClockTick();
   return buildTournamentClockPayload_();
 }
 
 function setClockTriggerEnabledFromUi(enabled) {
   const nextValue = !!enabled;
+  let alreadyPublished = false;
 
   if (nextValue) {
     resumeTournamentInternalClock();
@@ -825,7 +846,8 @@ function setClockTriggerEnabledFromUi(enabled) {
     } else {
       setConfigValue('clock_trigger_enabled', true, 'Habilita el trigger automatico del reloj');
     }
-    runTournamentClockManualTick();
+    runTickAndPublishRealtime();
+    alreadyPublished = true;
   } else {
     pauseTournamentInternalClock();
     removeTournamentClockTriggers();
@@ -833,7 +855,7 @@ function setClockTriggerEnabledFromUi(enabled) {
 
   const vm = getAdminControlViewModel();
   vm.lastActionMessage = nextValue ? 'Cronometro iniciado. El bloque programado avanza segun el tick.' : 'Cronometro pausado.';
-  return publishRealtimeSnapshotAfterMutation_(vm);
+  return alreadyPublished ? vm : publishRealtimeSnapshotAfterMutation_(vm);
 }
 
 function confirmSinglesGroupsFromUi() {
@@ -867,13 +889,13 @@ function startDemoTournamentNowFromUi() {
   }
 
   const blockId = setupDoublesStageFromCut();
-  tickTournamentClock();
+  runTickAndPublishRealtime();
 
   const vm = getAdminControlViewModel();
   vm.lastActionMessage = blockId
     ? `Simulacion iniciada. Bloque de dobles ${blockId} listo y reloj ejecutado.`
     : 'Simulacion iniciada sin bloque de dobles.';
-  return publishRealtimeSnapshotAfterMutation_(vm);
+  return vm;
 }
 
 function publishRealtimeSnapshotAfterMutation_(result, playerIds) {
@@ -1035,7 +1057,7 @@ function validateUiMatchSubmissionContext(match, actorPlayerId, actorRole, mode)
   }
 }
 
-function mapMatchForPublicView(match) {
+function mapMatchForPublicView(match, currentBlock) {
   const phaseType = String(match.phase_type || '').trim();
   const leftLabel = resolveCompetitorLabel(match.player_a_id, phaseType);
   const rightLabel = resolveCompetitorLabel(match.player_b_id, phaseType);
@@ -1050,7 +1072,7 @@ function mapMatchForPublicView(match) {
     rightLabel,
     matchupLabel: buildMatchupLabel(match),
     refereeLabel: refereeLabel ? `Árbitro: ${refereeLabel}` : '',
-    status: mapMatchStatusLabel(match.status),
+    status: mapMatchStatusLabel(match.status, currentBlock),
     resultMode: String(match.result_mode || ''),
     closingState: String(match.closing_state || ''),
     setsA: valueForClient(match.sets_a),
@@ -1171,8 +1193,14 @@ function resolvePlayerFullName(playerId) {
   return String(player.full_name || player.display_name || player.player_id || '').trim();
 }
 
-function mapMatchStatusLabel(status) {
+function mapMatchStatusLabel(status, currentBlock) {
   const value = String(status || '').trim();
+  const blockStatus = String(currentBlock && currentBlock.status || '').trim();
+
+  if (blockStatus === 'scheduled') return 'Programado';
+  if (blockStatus === 'closing' && value === 'live') return 'Cierre en curso';
+  if (blockStatus === 'transition') return 'Cerrado/Terminado';
+  if (blockStatus === 'closed') return 'Bloque cerrado';
 
   if (value === 'live') return 'En juego';
   if (value === 'result_submitted') return 'Resultado ingresado';

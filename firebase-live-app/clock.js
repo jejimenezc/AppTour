@@ -2,51 +2,20 @@
  * Tick principal del torneo.
  */
 function tickTournamentClock() {
-  const currentBlock = getCurrentBlock();
-  if (!currentBlock) {
-    Logger.log('No hay bloque actual.');
-    return;
-  }
-
   const clockState = getTournamentClockState_();
   const nowText = String(clockState.internalNowTs || '').trim();
   if (!nowText) {
     Logger.log(`Clock tick omitido: reloj interno invalido (${clockState.health || 'unknown'}).`);
-    return;
+    return {
+      ok: false,
+      skipped: true,
+      reason: 'invalid_clock',
+      processedInternalTs: '',
+      actions: [],
+    };
   }
 
-  const startTs = normalizeDateTimeText(currentBlock.start_ts);
-  const closeSignalTs = normalizeDateTimeText(currentBlock.close_signal_ts);
-  const hardCloseTs = normalizeDateTimeText(currentBlock.hard_close_ts);
-  const endTs = normalizeDateTimeText(currentBlock.end_ts);
-
-  let status = String(currentBlock.status || '').trim();
-
-  if (status === 'scheduled' && startTs && nowText >= startTs) {
-    startCurrentBlock(currentBlock.block_id);
-    Logger.log(`Bloque ${currentBlock.block_id} => live`);
-    return;
-  }
-
-  if (status === 'live' && closeSignalTs && nowText >= closeSignalTs) {
-    enterClosingState(currentBlock.block_id);
-    Logger.log(`Bloque ${currentBlock.block_id} => closing`);
-    return;
-  }
-
-  if ((status === 'live' || status === 'closing') && hardCloseTs && nowText >= hardCloseTs) {
-    enterTransitionState(currentBlock.block_id);
-    Logger.log(`Bloque ${currentBlock.block_id} => transition`);
-    return;
-  }
-
-  if (status === 'transition' && endTs && nowText >= endTs) {
-    finishCurrentBlockAndMoveNext(currentBlock.block_id);
-    Logger.log(`Bloque ${currentBlock.block_id} => closed`);
-    return;
-  }
-
-  Logger.log(`Sin cambios para bloque ${currentBlock.block_id}. Estado actual: ${status}`);
+  return reconcileTournamentFlowFromClock_(nowText);
 }
 
 const CLOCK_TRIGGER_HANDLER = 'runTournamentClockTick';
@@ -58,7 +27,7 @@ const CLOCK_TRIGGER_DEFAULT_MINUTES = 1;
  * Aplica lock para evitar solapamientos y solo corre si el trigger esta habilitado.
  */
 function runTournamentClockTick() {
-  runTournamentClockTickWithOptions_({
+  return runTournamentClockTickWithOptions_({
     requireEnabled: true,
     auditNote: 'Ultima ejecucion automatica del reloj',
   });
@@ -68,10 +37,14 @@ function runTournamentClockTick() {
  * Ejecuta el tick manual compartiendo lock y auditoria con el trigger automatico.
  */
 function runTournamentClockManualTick() {
-  runTournamentClockTickWithOptions_({
+  return runTournamentClockTickWithOptions_({
     requireEnabled: false,
     auditNote: 'Ultima ejecucion manual del reloj',
   });
+}
+
+function runTickAndPublishRealtime() {
+  return runTournamentClockManualTick();
 }
 
 /**
@@ -85,25 +58,55 @@ function runTournamentClockTickWithOptions_(options) {
 
   if (opts.requireEnabled && !toBoolean(getConfigValue('clock_trigger_enabled'))) {
     Logger.log('Clock trigger omitido: clock_trigger_enabled=false');
-    return;
+    return {
+      ok: false,
+      skipped: true,
+      reason: 'trigger_disabled',
+      tickResult: null,
+      publishResult: null,
+    };
   }
 
   if (clockState.health === 'missing_start_ts') {
     Logger.log('Clock trigger omitido: falta tournament_start_ts.');
-    return;
+    return {
+      ok: false,
+      skipped: true,
+      reason: 'missing_start_ts',
+      tickResult: null,
+      publishResult: null,
+    };
   }
 
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(1000)) {
     Logger.log('Clock trigger omitido: existe otra ejecucion en curso.');
-    return;
+    return {
+      ok: false,
+      skipped: true,
+      reason: 'lock_unavailable',
+      tickResult: null,
+      publishResult: null,
+    };
   }
 
   try {
-    tickTournamentClock();
+    const tickResult = tickTournamentClock();
     setConfigValue('clock_trigger_last_run_at', nowIso(), opts.auditNote || 'Ultima ejecucion del reloj');
+    setConfigValue(
+      'clock_last_processed_internal_ts',
+      tickResult && tickResult.processedInternalTs ? tickResult.processedInternalTs : '',
+      'Ultimo tiempo interno procesado por el motor'
+    );
     setConfigValue('clock_trigger_last_error', '', 'Ultimo error del reloj');
-    publishRealtimeSnapshotToFirebase();
+    const publishResult = publishRealtimeSnapshotToFirebase();
+
+    return {
+      ok: true,
+      skipped: false,
+      tickResult: tickResult,
+      publishResult: publishResult,
+    };
   } catch (error) {
     const message = error && error.message ? error.message : String(error);
     setConfigValue('clock_trigger_last_error', message, 'Ultimo error del reloj');
@@ -123,17 +126,17 @@ function getTournamentClockNowText() {
 }
 
 /**
- * Devuelve el estado del reloj interno autocorregido contra tournament_start_ts.
- * `tournament_start_ts` es la fuente de verdad; las anclas son cache operacional.
+ * Devuelve el estado del cronometro del torneo.
+ * `tournament_start_ts` fija el origen del calendario y el cronometro
+ * acumulado define el ahora interno del torneo.
  *
  * @returns {{
  *   startTs:string,
  *   realNowTs:string,
- *   internalAnchorTs:string,
- *   realAnchorTs:string,
  *   internalNowTs:string,
  *   elapsedMs:number,
  *   isRunning:boolean,
+ *   lastResumeRealTs:string,
  *   health:string,
  *   healthMessage:string
  * }}
@@ -141,17 +144,19 @@ function getTournamentClockNowText() {
 function getTournamentClockState_() {
   const startTs = normalizeDateTimeText(getConfigValue('tournament_start_ts'));
   const realNowTs = normalizeDateTimeText(nowIso());
-  const isRunning = toBoolean(getConfigValue('clock_trigger_enabled'));
+  const storedRunning = getConfigValue('clock_is_running');
+  const isRunning = storedRunning === null || storedRunning === ''
+    ? toBoolean(getConfigValue('clock_trigger_enabled'))
+    : toBoolean(storedRunning);
 
   if (!startTs) {
     return {
       startTs: '',
       realNowTs,
-      internalAnchorTs: '',
-      realAnchorTs: '',
       internalNowTs: '',
       elapsedMs: 0,
       isRunning: false,
+      lastResumeRealTs: '',
       health: 'missing_start_ts',
       healthMessage: 'Falta tournament_start_ts.',
     };
@@ -163,86 +168,190 @@ function getTournamentClockState_() {
     return {
       startTs,
       realNowTs,
-      internalAnchorTs: startTs,
-      realAnchorTs: realNowTs,
       internalNowTs: startTs,
       elapsedMs: 0,
       isRunning: false,
+      lastResumeRealTs: '',
       health: 'invalid_anchor',
       healthMessage: 'No se pudo interpretar la base temporal del torneo.',
     };
   }
 
-  let internalAnchorTs = normalizeDateTimeText(getConfigValue('clock_internal_anchor_ts'));
-  let realAnchorTs = normalizeDateTimeText(getConfigValue('clock_real_anchor_ts'));
+  let elapsedMs = getStoredTournamentClockElapsedMs_();
+  let lastResumeRealTs = normalizeDateTimeText(getConfigValue('clock_last_resume_real_ts'));
   let health = 'ok';
   let healthMessage = '';
   let needsPersist = false;
+  let resolvedIsRunning = isRunning;
 
-  if (!internalAnchorTs) {
-    internalAnchorTs = startTs;
+  if (elapsedMs === null) {
+    const migrated = migrateLegacyTournamentClockState_(startTs, realNowTs, resolvedIsRunning);
+    if (migrated) {
+      elapsedMs = migrated.elapsedMs;
+      lastResumeRealTs = migrated.lastResumeRealTs;
+      resolvedIsRunning = migrated.isRunning;
+      health = 'autocorrected';
+      healthMessage = 'Se migro el reloj legacy al nuevo cronometro.';
+      needsPersist = true;
+    } else {
+      elapsedMs = 0;
+      health = 'autocorrected';
+      healthMessage = 'Se inicializo clock_elapsed_ms en 0.';
+      needsPersist = true;
+    }
+  }
+
+  if (elapsedMs < 0) {
+    elapsedMs = 0;
     health = 'autocorrected';
-    healthMessage = 'Se recreo clock_internal_anchor_ts desde tournament_start_ts.';
+    healthMessage = 'clock_elapsed_ms era invalido; se reseteo a 0.';
     needsPersist = true;
   }
 
-  if (!realAnchorTs) {
-    realAnchorTs = isRunning ? realNowTs : startTs;
-    health = 'autocorrected';
-    healthMessage = 'Se recreo clock_real_anchor_ts.';
-    needsPersist = true;
+  let visibleElapsedMs = elapsedMs;
+  if (resolvedIsRunning) {
+    const lastResumeDate = parseBlockDate(lastResumeRealTs);
+    if (!lastResumeDate) {
+      lastResumeRealTs = realNowTs;
+      health = 'autocorrected';
+      healthMessage = 'Se recreo clock_last_resume_real_ts.';
+      needsPersist = true;
+    } else {
+      visibleElapsedMs += Math.max(0, realNowDate.getTime() - lastResumeDate.getTime());
+    }
   }
 
-  let internalAnchorDate = parseBlockDate(internalAnchorTs);
-  let realAnchorDate = parseBlockDate(realAnchorTs);
-
-  if (!internalAnchorDate) {
-    internalAnchorTs = startTs;
-    internalAnchorDate = startDate;
-    health = 'autocorrected';
-    healthMessage = 'clock_internal_anchor_ts era invalido; se reseteo al inicio del torneo.';
-    needsPersist = true;
-  }
-
-  if (!realAnchorDate) {
-    realAnchorTs = realNowTs;
-    realAnchorDate = realNowDate;
-    health = 'autocorrected';
-    healthMessage = 'clock_real_anchor_ts era invalido; se reseteo a la hora real actual.';
-    needsPersist = true;
-  }
-
-  if (internalAnchorDate.getTime() < startDate.getTime()) {
-    internalAnchorTs = startTs;
-    internalAnchorDate = startDate;
-    health = 'autocorrected';
-    healthMessage = 'El reloj interno quedo antes de tournament_start_ts; se realineo al inicio del torneo.';
-    needsPersist = true;
-  }
-
-  let elapsedMs = Math.max(0, internalAnchorDate.getTime() - startDate.getTime());
-  if (isRunning) {
-    elapsedMs += Math.max(0, realNowDate.getTime() - realAnchorDate.getTime());
-  }
-
-  const internalNowTs = formatParsedBlockDate(new Date(startDate.getTime() + elapsedMs));
+  const internalNowTs = formatParsedBlockDate(new Date(startDate.getTime() + visibleElapsedMs));
 
   if (needsPersist) {
-    setConfigValue('clock_internal_anchor_ts', internalAnchorTs, 'Ancla interna del reloj del torneo');
-    setConfigValue('clock_real_anchor_ts', realAnchorTs, 'Ancla real del reloj del torneo');
+    setConfigValue('clock_elapsed_ms', elapsedMs, 'Cronometro acumulado del torneo en ms');
+    setConfigValue('clock_last_resume_real_ts', lastResumeRealTs, 'Ultima reanudacion real del cronometro');
+    setConfigValue('clock_is_running', resolvedIsRunning, 'Estado del cronometro del torneo');
   }
 
   return {
     startTs,
     realNowTs,
-    internalAnchorTs,
-    realAnchorTs,
     internalNowTs,
-    elapsedMs,
-    isRunning,
+    elapsedMs: visibleElapsedMs,
+    isRunning: resolvedIsRunning,
+    lastResumeRealTs,
     health,
     healthMessage,
   };
+}
+
+function getStoredTournamentClockElapsedMs_() {
+  const raw = getConfigValue('clock_elapsed_ms');
+  if (raw === null || raw === '') {
+    return null;
+  }
+
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : null;
+}
+
+function migrateLegacyTournamentClockState_(startTs, realNowTs, isRunning) {
+  const internalAnchorTs = normalizeDateTimeText(getConfigValue('clock_internal_anchor_ts'));
+  const realAnchorTs = normalizeDateTimeText(getConfigValue('clock_real_anchor_ts'));
+  if (!internalAnchorTs) {
+    return null;
+  }
+
+  const startDate = parseBlockDate(startTs);
+  const internalAnchorDate = parseBlockDate(internalAnchorTs);
+  const realAnchorDate = parseBlockDate(realAnchorTs || realNowTs);
+  const realNowDate = parseBlockDate(realNowTs);
+  if (!startDate || !internalAnchorDate || !realNowDate) {
+    return null;
+  }
+
+  let elapsedMs = Math.max(0, internalAnchorDate.getTime() - startDate.getTime());
+  if (isRunning && realAnchorDate) {
+    elapsedMs += Math.max(0, realNowDate.getTime() - realAnchorDate.getTime());
+  }
+
+  return {
+    elapsedMs: elapsedMs,
+    lastResumeRealTs: isRunning ? realNowTs : '',
+    isRunning: isRunning,
+  };
+}
+
+function reconcileTournamentFlowFromClock_(internalNowTs) {
+  const nowText = normalizeDateTimeText(internalNowTs);
+  const actions = [];
+  let changed = false;
+
+  if (!nowText) {
+    return {
+      ok: false,
+      changed: false,
+      actions: actions,
+      processedInternalTs: '',
+      currentBlockId: '',
+      currentBlockStatus: '',
+    };
+  }
+
+  for (let step = 0; step < 50; step += 1) {
+    const currentBlock = getCurrentBlock();
+    if (!currentBlock) {
+      return {
+        ok: true,
+        changed: changed,
+        actions: actions,
+        processedInternalTs: nowText,
+        currentBlockId: '',
+        currentBlockStatus: '',
+      };
+    }
+
+    const startTs = normalizeDateTimeText(currentBlock.start_ts);
+    const closeSignalTs = normalizeDateTimeText(currentBlock.close_signal_ts);
+    const hardCloseTs = normalizeDateTimeText(currentBlock.hard_close_ts);
+    const endTs = normalizeDateTimeText(currentBlock.end_ts);
+    const status = String(currentBlock.status || '').trim();
+
+    if (status === 'scheduled' && startTs && nowText >= startTs) {
+      startCurrentBlock(currentBlock.block_id);
+      actions.push(`Bloque ${currentBlock.block_id} => live`);
+      changed = true;
+      continue;
+    }
+
+    if (status === 'live' && closeSignalTs && nowText >= closeSignalTs) {
+      enterClosingState(currentBlock.block_id);
+      actions.push(`Bloque ${currentBlock.block_id} => closing`);
+      changed = true;
+      continue;
+    }
+
+    if ((status === 'live' || status === 'closing') && hardCloseTs && nowText >= hardCloseTs) {
+      enterTransitionState(currentBlock.block_id);
+      actions.push(`Bloque ${currentBlock.block_id} => transition`);
+      changed = true;
+      continue;
+    }
+
+    if (status === 'transition' && endTs && nowText >= endTs) {
+      finishCurrentBlockAndMoveNext(currentBlock.block_id);
+      actions.push(`Bloque ${currentBlock.block_id} => closed`);
+      changed = true;
+      continue;
+    }
+
+    return {
+      ok: true,
+      changed: changed,
+      actions: actions,
+      processedInternalTs: nowText,
+      currentBlockId: String(currentBlock.block_id || '').trim(),
+      currentBlockStatus: status,
+    };
+  }
+
+  throw new Error('El reconciliador del cronometro supero el maximo de pasos permitidos.');
 }
 
 /**
@@ -254,8 +363,10 @@ function resetTournamentInternalClock(startTs) {
   const normalizedStart = normalizeDateTimeText(startTs || getConfigValue('tournament_start_ts'));
   if (!normalizedStart) return;
 
-  setConfigValue('clock_internal_anchor_ts', normalizedStart, 'Ancla interna del reloj del torneo');
-  setConfigValue('clock_real_anchor_ts', nowIso(), 'Ancla real del reloj del torneo');
+  const keepRunning = toBoolean(getConfigValue('clock_is_running'));
+  setConfigValue('clock_elapsed_ms', 0, 'Cronometro acumulado del torneo en ms');
+  setConfigValue('clock_last_resume_real_ts', keepRunning ? nowIso() : '', 'Ultima reanudacion real del cronometro');
+  setConfigValue('clock_is_running', keepRunning, 'Estado del cronometro del torneo');
 }
 
 /**
@@ -265,8 +376,9 @@ function pauseTournamentInternalClock() {
   const state = getTournamentClockState_();
   if (!state.startTs) return;
 
-  setConfigValue('clock_internal_anchor_ts', state.internalNowTs, 'Ancla interna del reloj del torneo');
-  setConfigValue('clock_real_anchor_ts', nowIso(), 'Ancla real del reloj del torneo');
+  setConfigValue('clock_elapsed_ms', state.elapsedMs, 'Cronometro acumulado del torneo en ms');
+  setConfigValue('clock_last_resume_real_ts', '', 'Ultima reanudacion real del cronometro');
+  setConfigValue('clock_is_running', false, 'Estado del cronometro del torneo');
 }
 
 /**
@@ -276,8 +388,9 @@ function resumeTournamentInternalClock() {
   const state = getTournamentClockState_();
   if (!state.startTs) return;
 
-  setConfigValue('clock_internal_anchor_ts', state.internalNowTs, 'Ancla interna del reloj del torneo');
-  setConfigValue('clock_real_anchor_ts', nowIso(), 'Ancla real del reloj del torneo');
+  setConfigValue('clock_elapsed_ms', state.elapsedMs, 'Cronometro acumulado del torneo en ms');
+  setConfigValue('clock_last_resume_real_ts', nowIso(), 'Ultima reanudacion real del cronometro');
+  setConfigValue('clock_is_running', true, 'Estado del cronometro del torneo');
 }
 
 /**
