@@ -602,23 +602,13 @@ function syncPlayerRolesForBlock(blockId) {
   });
 
   matches.forEach(match => {
+    const phaseType = String(match.phase_type || '').trim();
     const a = String(match.player_a_id || '').trim();
     const b = String(match.player_b_id || '').trim();
     const r = String(match.referee_player_id || '').trim();
 
-    if (a) {
-      roleMap[a] = {
-        current_role: 'play',
-        current_block_id: blockId,
-      };
-    }
-
-    if (b) {
-      roleMap[b] = {
-        current_role: 'play',
-        current_block_id: blockId,
-      };
-    }
+    applyPlayerRoleFromMatchSide_(roleMap, a, phaseType, blockId);
+    applyPlayerRoleFromMatchSide_(roleMap, b, phaseType, blockId);
 
     if (r) {
       roleMap[r] = {
@@ -631,6 +621,32 @@ function syncPlayerRolesForBlock(blockId) {
   Object.keys(roleMap).forEach(playerId => {
     updatePlayer(playerId, roleMap[playerId]);
   });
+}
+
+function applyPlayerRoleFromMatchSide_(roleMap, sideId, phaseType, blockId) {
+  const normalizedId = String(sideId || '').trim();
+  if (!normalizedId) return;
+
+  if (phaseType === 'doubles') {
+    const team = getDoublesTeamById(normalizedId);
+    if (!team) return;
+
+    [team.player_1_id, team.player_2_id].forEach(function (playerId) {
+      const normalizedPlayerId = String(playerId || '').trim();
+      if (!normalizedPlayerId) return;
+
+      roleMap[normalizedPlayerId] = {
+        current_role: 'play',
+        current_block_id: blockId,
+      };
+    });
+    return;
+  }
+
+  roleMap[normalizedId] = {
+    current_role: 'play',
+    current_block_id: blockId,
+  };
 }
 
 /**
