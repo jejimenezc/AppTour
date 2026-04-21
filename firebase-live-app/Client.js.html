@@ -5,10 +5,20 @@
   const LOCAL_STORAGE_PLAYER_KEY = 'ttm_selected_player_id';
   const LOCAL_STORAGE_GROUPS_PLAYER_KEY = 'ttm_groups_selected_player_id';
   const LOCAL_STORAGE_SCREEN_KEY = 'ttm_active_screen';
+  const FIREBASE_CONFIG = {
+    apiKey: 'AIzaSyB1Nrl8x_wJqBzy1uzqLGOdM243h8Dw6Fw',
+    authDomain: 'appttour.firebaseapp.com',
+    projectId: 'appttour',
+    storageBucket: 'appttour.firebasestorage.app',
+    messagingSenderId: '298018962537',
+    appId: '1:298018962537:web:88606ac251f2d7b904f6f8',
+    measurementId: 'G-E1L3YDJEMS',
+  };
 
   let publicRefreshTimer = null;
   let publicLoadInFlight = false;
   let publicLastSuccessAt = null;
+  let currentPublicVm = null;
   let currentMyDayVm = null;
   let currentSinglesGroupsVm = null;
   let currentDoublesVm = null;
@@ -26,11 +36,16 @@
   let doublesIsLoading = false;
   let doublesLoadingTitle = '';
   let doublesLoadingDetail = '';
+  let db = null;
+  let realtimeMatchesRef = null;
+  let realtimeListenerAttached = false;
+  let lastRealtimePayload = null;
+  let lastRealtimeMatches = [];
 
   document.addEventListener('DOMContentLoaded', function () {
     initializeAppScreens();
+    initializeFirebaseRealtime();
     loadPublicScreen();
-    startPublicAutoRefresh();
     startMyDayAutoRefresh();
     startClientClockTicker();
     loadPlayerSelector();
@@ -113,6 +128,11 @@
   function startPublicAutoRefresh() {
     stopPublicAutoRefresh();
 
+    if (realtimeListenerAttached) {
+      setRefreshIndicator('Sincronizacion en tiempo real activada');
+      return;
+    }
+
     publicRefreshTimer = window.setInterval(function () {
       loadPublicScreen({ silent: true });
     }, PUBLIC_REFRESH_MS);
@@ -171,6 +191,9 @@
         publicLoadInFlight = false;
         publicLastSuccessAt = new Date();
         renderPublicScreen(vm);
+        if (lastRealtimeMatches.length) {
+          applyRealtimeMatchesToViews(lastRealtimeMatches, { preserveGeneratedAt: true });
+        }
         setRefreshIndicator(buildRefreshIndicatorText());
       })
       .withFailureHandler(function (error) {
@@ -182,8 +205,188 @@
   }
 
   function renderPublicScreen(vm) {
+    currentPublicVm = vm;
     renderTopStats(vm);
     renderPublicMatches(vm);
+  }
+
+  function initializeFirebaseRealtime() {
+    if (typeof firebase === 'undefined' || !firebase || typeof firebase.initializeApp !== 'function') {
+      console.warn('Firebase compat no esta disponible en el cliente.');
+      startPublicAutoRefresh();
+      return;
+    }
+
+    try {
+      if (!firebase.apps || !firebase.apps.length) {
+        firebase.initializeApp(FIREBASE_CONFIG);
+      }
+
+      db = firebase.database();
+      subscribeRealtimeMatches();
+    } catch (error) {
+      console.error('No fue posible inicializar Firebase Realtime Database.', error);
+      startPublicAutoRefresh();
+    }
+  }
+
+  function subscribeRealtimeMatches() {
+    if (!db || realtimeListenerAttached) return;
+
+    realtimeMatchesRef = db.ref('partidos');
+    realtimeMatchesRef.on('value', function (snapshot) {
+      lastRealtimePayload = snapshot ? snapshot.val() : null;
+      lastRealtimeMatches = normalizeRealtimeMatchesPayload(lastRealtimePayload);
+      applyRealtimeMatchesToViews(lastRealtimeMatches);
+      setRefreshIndicator('Sincronizado en tiempo real');
+    }, function (error) {
+      console.error('Error al escuchar partidos en Firebase.', error);
+      if (!publicRefreshTimer) {
+        startPublicAutoRefresh();
+      }
+    });
+
+    realtimeListenerAttached = true;
+  }
+
+  function normalizeRealtimeMatchesPayload(payload) {
+    if (!payload) return [];
+
+    if (Array.isArray(payload)) {
+      return payload.filter(Boolean);
+    }
+
+    if (payload.publicViewModel && Array.isArray(payload.publicViewModel.matches)) {
+      return payload.publicViewModel.matches.filter(Boolean);
+    }
+
+    if (Array.isArray(payload.matches)) {
+      return payload.matches.filter(Boolean);
+    }
+
+    if (payload.matches && typeof payload.matches === 'object') {
+      return Object.keys(payload.matches).map(function (key) {
+        const item = payload.matches[key] || {};
+        return Object.assign({ matchId: item.matchId || key }, item);
+      });
+    }
+
+    if (typeof payload === 'object') {
+      return Object.keys(payload).map(function (key) {
+        const item = payload[key] || {};
+        return Object.assign({ matchId: item.matchId || key }, item);
+      }).filter(function (item) {
+        return item && (item.matchId || item.id);
+      });
+    }
+
+    return [];
+  }
+
+  function applyRealtimeMatchesToViews(matches, options) {
+    const opts = options || {};
+    const safeMatches = Array.isArray(matches) ? matches.slice() : [];
+    const nextPublicVm = buildPublicVmFromRealtimeMatches(safeMatches, opts);
+
+    renderPublicScreen(nextPublicVm);
+    syncRealtimeMatchIntoMyDay(safeMatches, nextPublicVm);
+  }
+
+  function buildPublicVmFromRealtimeMatches(matches, options) {
+    const opts = options || {};
+    const baseVm = currentPublicVm || {};
+    const realtimeMeta = extractRealtimePublicMeta(lastRealtimePayload);
+    const generatedAt = opts.preserveGeneratedAt && baseVm.generatedAt
+      ? baseVm.generatedAt
+      : realtimeMeta.generatedAt || formatRealtimeGeneratedAt();
+
+    return {
+      tournamentStatus: realtimeMeta.tournamentStatus || baseVm.tournamentStatus || 'live',
+      currentBlock: realtimeMeta.currentBlock || baseVm.currentBlock || null,
+      matches: matches,
+      generatedAt: generatedAt,
+    };
+  }
+
+  function extractRealtimePublicMeta(payload) {
+    if (!payload || typeof payload !== 'object') {
+      return {
+        tournamentStatus: '',
+        currentBlock: null,
+        generatedAt: '',
+      };
+    }
+
+    const source = payload.publicViewModel && typeof payload.publicViewModel === 'object'
+      ? payload.publicViewModel
+      : payload;
+
+    return {
+      tournamentStatus: String(source.tournamentStatus || '').trim(),
+      currentBlock: source.currentBlock || null,
+      generatedAt: String(source.generatedAt || '').trim(),
+    };
+  }
+
+  function formatRealtimeGeneratedAt() {
+    const now = new Date();
+    const pad = function (value) {
+      return String(value).padStart(2, '0');
+    };
+
+    return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+  }
+
+  function syncRealtimeMatchIntoMyDay(matches, publicVm) {
+    if (!currentMyDayVm || !currentMyDayVm.currentMatch) return;
+
+    const currentMatchId = String(currentMyDayVm.currentMatch.matchId || currentMyDayVm.currentMatch.id || '').trim();
+    if (!currentMatchId) return;
+
+    const updatedMatch = matches.find(function (match) {
+      const matchId = String(match && (match.matchId || match.id) || '').trim();
+      return matchId === currentMatchId;
+    });
+
+    if (!updatedMatch) return;
+
+    currentMyDayVm = Object.assign({}, currentMyDayVm, {
+      currentBlock: publicVm && publicVm.currentBlock ? publicVm.currentBlock : currentMyDayVm.currentBlock,
+      generatedAt: publicVm && publicVm.generatedAt ? publicVm.generatedAt : currentMyDayVm.generatedAt,
+      currentMatch: Object.assign({}, currentMyDayVm.currentMatch, mapRealtimeMatchToMyDayMatch(currentMyDayVm.currentMatch, updatedMatch)),
+    });
+
+    renderMyDay(currentMyDayVm);
+  }
+
+  function mapRealtimeMatchToMyDayMatch(baseMatch, realtimeMatch) {
+    const nextStatus = String(realtimeMatch && (realtimeMatch.matchStatus || realtimeMatch.status) || baseMatch.matchStatus || '').trim();
+    const nextResultMode = String(realtimeMatch && realtimeMatch.resultMode || baseMatch.resultMode || '').trim();
+    const nextClosingState = String(realtimeMatch && realtimeMatch.closingState || baseMatch.closingState || '').trim();
+
+    return {
+      tableNo: realtimeMatch && realtimeMatch.tableNo != null ? realtimeMatch.tableNo : baseMatch.tableNo,
+      phaseLabel: realtimeMatch && realtimeMatch.phaseLabel ? realtimeMatch.phaseLabel : baseMatch.phaseLabel,
+      leftLabel: realtimeMatch && realtimeMatch.leftLabel ? realtimeMatch.leftLabel : baseMatch.leftLabel,
+      rightLabel: realtimeMatch && realtimeMatch.rightLabel ? realtimeMatch.rightLabel : baseMatch.rightLabel,
+      matchupLabel: realtimeMatch && realtimeMatch.matchupLabel ? realtimeMatch.matchupLabel : baseMatch.matchupLabel,
+      matchStatus: nextStatus,
+      resultMode: nextResultMode,
+      closingState: nextClosingState,
+      isByeAdvance: typeof realtimeMatch.isByeAdvance === 'boolean' ? realtimeMatch.isByeAdvance : baseMatch.isByeAdvance,
+      allowedCaptureActions: Object.assign({}, baseMatch.allowedCaptureActions, deriveCaptureActionsFromRealtimeStatus(nextStatus)),
+    };
+  }
+
+  function deriveCaptureActionsFromRealtimeStatus(status) {
+    const normalized = String(status || '').trim();
+    const isClosed = normalized === 'result_submitted' || normalized === 'auto_closed';
+
+    return {
+      canOpen: !isClosed,
+      canSubmitFinal: !isClosed,
+      canSubmitClosingState: !isClosed,
+    };
   }
 
   function renderTopStats(vm) {
