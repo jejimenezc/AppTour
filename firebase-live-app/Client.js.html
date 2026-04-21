@@ -1,0 +1,2348 @@
+<script>
+  const PUBLIC_REFRESH_MS = 10000;
+  const MYDAY_REFRESH_MS = 5000;
+  const CLIENT_CLOCK_TICK_MS = 1000;
+  const LOCAL_STORAGE_PLAYER_KEY = 'ttm_selected_player_id';
+  const LOCAL_STORAGE_GROUPS_PLAYER_KEY = 'ttm_groups_selected_player_id';
+  const LOCAL_STORAGE_SCREEN_KEY = 'ttm_active_screen';
+
+  let publicRefreshTimer = null;
+  let publicLoadInFlight = false;
+  let publicLastSuccessAt = null;
+  let currentMyDayVm = null;
+  let currentSinglesGroupsVm = null;
+  let currentDoublesVm = null;
+  let currentAdminVm = null;
+  let adminActionInFlight = false;
+  let myDayRefreshTimer = null;
+  let myDayLoadInFlight = false;
+  let myDayHeartbeatInFlight = false;
+  let myDayLastSuccessAt = null;
+  let myDayLastErrorMessage = '';
+  let myDayClockTimer = null;
+  let myDayClockSnapshot = null;
+  let doublesLoadRequestSeq = 0;
+  let doublesLoadRequestActive = 0;
+  let doublesIsLoading = false;
+  let doublesLoadingTitle = '';
+  let doublesLoadingDetail = '';
+
+  document.addEventListener('DOMContentLoaded', function () {
+    initializeAppScreens();
+    loadPublicScreen();
+    startPublicAutoRefresh();
+    startMyDayAutoRefresh();
+    startClientClockTicker();
+    loadPlayerSelector();
+    loadSinglesGroupsConfig();
+    loadDoublesConfig();
+    loadAdminControl();
+  });
+
+  function initializeAppScreens() {
+    const savedScreen = getSavedAppScreen();
+    setActiveAppScreen(savedScreen || 'public');
+  }
+
+  function getSavedAppScreen() {
+    try {
+      return window.localStorage.getItem(LOCAL_STORAGE_SCREEN_KEY) || 'public';
+    } catch (error) {
+      return 'public';
+    }
+  }
+
+  function saveAppScreen(screen) {
+    try {
+      window.localStorage.setItem(LOCAL_STORAGE_SCREEN_KEY, screen);
+    } catch (error) {
+      // ignore storage failures
+    }
+  }
+
+  function setActiveAppScreen(screen) {
+    const nextScreen = String(screen || 'public').trim() || 'public';
+    const tabs = document.querySelectorAll('[data-screen-tab]');
+    const panels = document.querySelectorAll('[data-screen-panel]');
+    const activeTabScreen = resolveParentScreenForTabs(nextScreen);
+
+    tabs.forEach(function (tab) {
+      const isActive = tab.getAttribute('data-screen-tab') === activeTabScreen;
+      tab.classList.toggle('is-active', isActive);
+      tab.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    });
+
+    panels.forEach(function (panel) {
+      const isActive = panel.getAttribute('data-screen-panel') === nextScreen;
+      panel.classList.toggle('is-active', isActive);
+      panel.hidden = !isActive;
+    });
+
+    saveAppScreen(nextScreen);
+    if (nextScreen === 'groups') {
+      loadSinglesGroupsConfig({ silent: true });
+    }
+    if (nextScreen === 'myday') {
+      refreshCurrentPlayerExperience({ silent: true });
+    }
+    if (nextScreen === 'doubles') {
+      refreshCurrentPlayerExperience({ silent: true });
+    }
+    window.scrollTo({ top: 0, behavior: 'auto' });
+  }
+
+  function resolveParentScreenForTabs(screen) {
+    const value = String(screen || '').trim();
+    if (value === 'doubles') return 'myday';
+    if (value === 'groups') return 'admin';
+    return value || 'public';
+  }
+
+  function shouldLoadDoublesConfigForCurrentSelection() {
+    const playerId = getSavedPlayerId();
+    if (!playerId) return false;
+    if (doublesIsLoading) return false;
+
+    const actorId = currentDoublesVm && currentDoublesVm.actor
+      ? String(currentDoublesVm.actor.id || '').trim()
+      : '';
+
+    return actorId !== playerId;
+  }
+
+  function startPublicAutoRefresh() {
+    stopPublicAutoRefresh();
+
+    publicRefreshTimer = window.setInterval(function () {
+      loadPublicScreen({ silent: true });
+    }, PUBLIC_REFRESH_MS);
+
+    setRefreshIndicator('Actualización automática activada');
+  }
+
+  function stopPublicAutoRefresh() {
+    if (publicRefreshTimer) {
+      window.clearInterval(publicRefreshTimer);
+      publicRefreshTimer = null;
+    }
+  }
+
+  function startMyDayAutoRefresh() {
+    stopMyDayAutoRefresh();
+
+    myDayRefreshTimer = window.setInterval(function () {
+      refreshCurrentPlayerExperience({ silent: true });
+    }, MYDAY_REFRESH_MS);
+  }
+
+  function stopMyDayAutoRefresh() {
+    if (myDayRefreshTimer) {
+      window.clearInterval(myDayRefreshTimer);
+      myDayRefreshTimer = null;
+    }
+  }
+
+  function startClientClockTicker() {
+    stopClientClockTicker();
+
+    myDayClockTimer = window.setInterval(function () {
+      updateMyDayClockHud();
+    }, CLIENT_CLOCK_TICK_MS);
+  }
+
+  function stopClientClockTicker() {
+    if (myDayClockTimer) {
+      window.clearInterval(myDayClockTimer);
+      myDayClockTimer = null;
+    }
+  }
+
+  function loadPublicScreen(options) {
+    const opts = options || {};
+    const silent = !!opts.silent;
+
+    if (publicLoadInFlight) return;
+
+    publicLoadInFlight = true;
+    setRefreshIndicator(silent ? 'Actualizando...' : 'Cargando datos...');
+
+    google.script.run
+      .withSuccessHandler(function (vm) {
+        publicLoadInFlight = false;
+        publicLastSuccessAt = new Date();
+        renderPublicScreen(vm);
+        setRefreshIndicator(buildRefreshIndicatorText());
+      })
+      .withFailureHandler(function (error) {
+        publicLoadInFlight = false;
+        renderPublicScreenError(error);
+        setRefreshIndicator('Error al actualizar');
+      })
+      .getPublicViewModel();
+  }
+
+  function renderPublicScreen(vm) {
+    renderTopStats(vm);
+    renderPublicMatches(vm);
+  }
+
+  function renderTopStats(vm) {
+    document.getElementById('stat-status').textContent = vm.tournamentStatus || '—';
+    document.getElementById('stat-block').textContent = vm.currentBlock ? vm.currentBlock.id : '—';
+    document.getElementById('stat-phase').textContent = vm.currentBlock ? vm.currentBlock.phaseLabel : '—';
+    document.getElementById('stat-updated').textContent = vm.generatedAt || '—';
+  }
+
+  function renderPublicMatches(vm) {
+    const root = document.getElementById('public-screen-content');
+
+    if (!vm.currentBlock) {
+      root.innerHTML = '<div class="empty">No hay bloque activo en este momento.</div>';
+      return;
+    }
+
+    if (!vm.matches || vm.matches.length === 0) {
+      root.innerHTML = '<div class="empty">El bloque actual no tiene partidos visibles.</div>';
+      return;
+    }
+
+    const html = vm.matches.map(function (match) {
+      return `
+        <article class="match-item">
+          <div class="row-between">
+            <div>
+              <span class="badge">Mesa ${escapeHtml(match.tableNo || '—')}</span>
+              <span class="helper" style="margin-left:8px;">${escapeHtml(match.phaseLabel || 'Partido')}</span>
+            </div>
+            ${renderStatusPill(match.status)}
+          </div>
+
+          <div style="margin-top:12px;">
+            <div style="font-size:18px; font-weight:bold;">
+              ${escapeHtml(match.matchupLabel || `${match.leftLabel || '—'} vs ${match.rightLabel || '—'}`)}
+            </div>
+            ${match.refereeLabel ? `<div class="helper">${escapeHtml(match.refereeLabel)}</div>` : ''}
+          </div>
+        </article>
+      `;
+    }).join('');
+
+    root.innerHTML = `<div class="match-list">${html}</div>`;
+    enhancePublicMatchups(root, vm.matches);
+  }
+
+  function enhancePublicMatchups(root, matches) {
+    const items = root ? root.querySelectorAll('.match-item') : [];
+    if (!items || !items.length) return;
+
+    items.forEach(function (article, index) {
+      const match = matches && matches[index];
+      if (!match) return;
+
+      const detailBlock = article.children[1];
+      const legacyMatchup = detailBlock ? detailBlock.firstElementChild : null;
+      if (!legacyMatchup) return;
+
+      legacyMatchup.outerHTML = renderResponsiveMatchup(match);
+    });
+  }
+
+  function renderResponsiveMatchup(match) {
+    const leftLabel = String(match && match.leftLabel || '').trim();
+    const rightLabel = String(match && match.rightLabel || '').trim();
+    const matchupLabel = String(match && match.matchupLabel || '').trim();
+    const fallbackLabel = matchupLabel || `${leftLabel || '-'} vs ${rightLabel || '-'}`;
+    const isStructuredMatchup = !!leftLabel &&
+      !!rightLabel &&
+      leftLabel !== 'BYE' &&
+      rightLabel !== 'BYE' &&
+      matchupLabel.indexOf('Pasan a la siguiente ronda') === -1;
+
+    if (!isStructuredMatchup) {
+      return `
+        <div class="matchup-display matchup-display--solo">
+          ${escapeHtml(fallbackLabel)}
+        </div>
+      `;
+    }
+
+    return `
+      <div class="matchup-display matchup-display--emphasis">
+        <span class="matchup-display__side">${escapeHtml(leftLabel)}</span>
+        <span class="matchup-display__anchor">vs</span>
+        <span class="matchup-display__side">${escapeHtml(rightLabel)}</span>
+      </div>
+    `;
+  }
+
+  function renderStatusPill(status) {
+    const value = String(status || '');
+    let cls = 'status-closed';
+
+    if (value === 'En juego') cls = 'status-live';
+    else if (value === 'Pendiente') cls = 'status-pending';
+    else if (value === 'Resultado ingresado') cls = 'status-done';
+
+    return `<span class="status-pill ${cls}">${escapeHtml(value || '—')}</span>`;
+  }
+
+  function renderPublicScreenError(error) {
+    const root = document.getElementById('public-screen-content');
+    const message = error && error.message ? error.message : String(error || 'Error desconocido');
+    root.innerHTML = `<div class="error">No se pudo cargar la pantalla pública: ${escapeHtml(message)}</div>`;
+  }
+
+  function setRefreshIndicator(text) {
+    const el = document.getElementById('refresh-indicator');
+    if (!el) return;
+    el.textContent = text;
+  }
+
+  function buildRefreshIndicatorText() {
+    if (!publicLastSuccessAt) {
+      return 'Actualización automática activada';
+    }
+
+    const hh = String(publicLastSuccessAt.getHours()).padStart(2, '0');
+    const mm = String(publicLastSuccessAt.getMinutes()).padStart(2, '0');
+    const ss = String(publicLastSuccessAt.getSeconds()).padStart(2, '0');
+
+    return `Actualización automática · última carga ${hh}:${mm}:${ss}`;
+  }
+
+  function loadPlayerSelector() {
+    google.script.run
+      .withSuccessHandler(renderPlayerSelector)
+      .withFailureHandler(function (err) {
+        console.error(err);
+      })
+      .getCheckedInPlayersForSelector();
+  }
+
+  function loadDoublesConfig(options) {
+    const opts = options || {};
+    const silent = !!opts.silent;
+    const root = document.getElementById('doubles-config-content');
+    if (!root) return;
+    const requestId = ++doublesLoadRequestSeq;
+    doublesLoadRequestActive = requestId;
+
+    const preserveVisibleState = silent && !!currentDoublesVm;
+    if (!preserveVisibleState) {
+      currentDoublesVm = null;
+    }
+    doublesIsLoading = true;
+    renderMyDayDoublesEntryCard();
+    if (!preserveVisibleState) {
+      root.innerHTML = buildDoublesLoadingHtml({
+        silent: silent,
+        title: doublesLoadingTitle,
+        detail: doublesLoadingDetail,
+      });
+    }
+    doublesLoadingTitle = '';
+    doublesLoadingDetail = '';
+
+    google.script.run
+      .withSuccessHandler(function (vm) {
+        if (requestId !== doublesLoadRequestActive) return;
+        doublesIsLoading = false;
+        renderDoublesConfig(vm);
+      })
+      .withFailureHandler(function (error) {
+        if (requestId !== doublesLoadRequestActive) return;
+        doublesIsLoading = false;
+        renderDoublesConfigError(error);
+      })
+      .getDoublesConfigViewModel(getSavedPlayerId());
+  }
+
+  function buildDoublesLoadingHtml(options) {
+    const opts = options || {};
+    const title = String(opts.title || '').trim() || (opts.silent ? 'Sincronizando check-in...' : 'Cargando configuracion de dobles...');
+    const detail = String(opts.detail || '').trim() || 'Estamos actualizando el estado del jugador seleccionado antes de mostrar las acciones disponibles.';
+    return `
+      <div class="card-soft doubles-loading-shell">
+        <div class="doubles-loading-spinner" aria-hidden="true"></div>
+        <div>
+          <div class="stat-value" style="font-size: 18px; margin-top: 0;">${escapeHtml(title)}</div>
+          <div class="helper" style="margin-top: 8px;">${escapeHtml(detail)}</div>
+        </div>
+      </div>
+    `;
+  }
+
+  function loadSinglesGroupsConfig(options) {
+    const opts = options || {};
+    const silent = !!opts.silent;
+    const root = document.getElementById('singles-groups-content');
+    if (!root) return;
+
+    if (!silent) {
+      root.innerHTML = '<div class="loading">Cargando propuesta de grupos...</div>';
+    }
+
+    google.script.run
+      .withSuccessHandler(renderSinglesGroupsConfig)
+      .withFailureHandler(renderSinglesGroupsConfigError)
+      .getSinglesGroupsViewModel(getSavedGroupsPlayerId());
+  }
+
+  function renderSinglesGroupsConfig(vm) {
+    currentSinglesGroupsVm = vm;
+    renderAdminGroupsEntryCard();
+
+    const root = document.getElementById('singles-groups-content');
+    if (!root) return;
+
+    const actor = vm.actor || null;
+    const capabilities = vm.capabilities || {};
+    const validation = vm.validation || { ok: false, errors: [] };
+    const groups = vm.groups || [];
+
+    const actionButtons = [
+      capabilities.canPrepareWindow
+        ? '<button class="admin-action-button" onclick="submitSinglesGroupsAction(\'open_window\')">Preparar grupos</button>'
+        : '',
+      capabilities.canRecalculate
+        ? '<button class="admin-action-button admin-action-button-secondary" onclick="submitSinglesGroupsAction(\'recalculate\')">Recalcular propuesta</button>'
+        : '',
+      capabilities.canConfirm
+        ? '<button class="admin-action-button" onclick="submitSinglesGroupsAction(\'confirm_groups\')">Confirmar grupos</button>'
+        : ''
+    ].filter(Boolean).join('');
+
+    const actorCardHtml = actor ? `
+      <div class="card-soft">
+        <div class="row-between" style="align-items: flex-start;">
+          <div>
+            <div class="stat-label">Jugador seleccionado</div>
+            <div class="stat-value" style="font-size: 20px; margin-top: 8px;">${escapeHtml(actor.name)}</div>
+            <div class="helper" style="margin-top: 6px;">${escapeHtml(actor.placementLabel || 'Sin propuesta')}</div>
+          </div>
+          <span class="status-pill ${actor.proposedGroupId ? 'status-live' : 'status-closed'}">${escapeHtml(actor.seed ? `Seed ${actor.seed}` : 'Sin seed')}</span>
+        </div>
+      </div>
+    ` : `
+      <div class="card-soft">
+        <div class="empty">Selecciona un jugador para moverlo entre grupos y slots.</div>
+      </div>
+    `;
+
+    const validationHtml = validation.ok ? `
+      <div class="card-soft">
+        <div class="row-between">
+          <div>
+            <div class="stat-label">Validacion</div>
+            <div class="stat-value" style="font-size: 18px; margin-top: 8px;">Propuesta consistente</div>
+          </div>
+          <span class="status-pill status-done">Lista para confirmar</span>
+        </div>
+      </div>
+    ` : (validation.errors || []).length ? `
+      <div class="card-soft">
+        <div class="stat-label" style="margin-bottom: 10px;">Observaciones</div>
+        <div class="stack" style="gap: 8px;">
+          ${(validation.errors || []).map(function (error) {
+            return `<div class="error" style="margin: 0;">${escapeHtml(error)}</div>`;
+          }).join('')}
+        </div>
+      </div>
+    ` : '';
+
+    const groupsHtml = groups.length ? `
+      <div class="groups-grid">
+        ${groups.map(function (group) {
+          return `
+            <article class="card-soft group-card">
+              <div class="row-between" style="align-items: flex-start;">
+                <div>
+                  <div class="stat-label">Grupo</div>
+                  <div class="stat-value" style="font-size: 20px; margin-top: 8px;">${escapeHtml(group.groupId)}</div>
+                </div>
+                <span class="status-pill status-closed">3 slots</span>
+              </div>
+
+              <div class="group-slots">
+                ${group.slots.map(function (slot) {
+                  const buttonHtml = slot.canMoveHere ? `
+                    <button
+                      class="admin-action-button admin-action-button-secondary groups-move-button"
+                      onclick="submitSinglesGroupsAction('move_player', { targetGroupId: '${escapeHtml(group.groupId)}', targetSlot: '${escapeHtml(slot.slot)}' })"
+                    >
+                      Mover aqui
+                    </button>
+                  ` : '';
+
+                  return `
+                    <div class="group-slot-card ${slot.isActorHere ? 'is-actor' : ''}">
+                      <div class="row-between" style="gap: 10px; align-items: center;">
+                        <span class="group-slot-badge">${escapeHtml(slot.slot)}</span>
+                        <span class="helper">${escapeHtml(slot.seed ? `Seed ${slot.seed}` : 'Sin seed')}</span>
+                      </div>
+                      <div class="doubles-row-name" style="margin-top: 10px;">${escapeHtml(slot.playerName || 'Sin asignar')}</div>
+                      <div class="helper" style="margin-top: 6px;">${escapeHtml(slot.detail || '')}</div>
+                      ${slot.isActorHere ? '<div class="helper" style="margin-top: 8px;">Ubicacion actual</div>' : buttonHtml}
+                    </div>
+                  `;
+                }).join('')}
+              </div>
+            </article>
+          `;
+        }).join('')}
+      </div>
+    ` : `
+      <div class="card-soft">
+        <div class="empty">Aun no hay grupos propuestos para mostrar.</div>
+      </div>
+    `;
+
+    root.innerHTML = `
+      <div class="stack">
+        <div class="grid-stats groups-summary-grid">
+          <div class="stat">
+            <div class="stat-label">Checked in</div>
+            <div class="stat-value">${escapeHtml(vm.summary.checkedIn)}</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Grupos</div>
+            <div class="stat-value">${escapeHtml(vm.summary.proposedGroups)}</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Asignados</div>
+            <div class="stat-value">${escapeHtml(vm.summary.assigned)}</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Confirmados</div>
+            <div class="stat-value">${escapeHtml(vm.summary.confirmedGroups)}</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Issues</div>
+            <div class="stat-value">${escapeHtml(vm.summary.issues)}</div>
+          </div>
+        </div>
+
+        <div class="card-soft">
+          <div class="helper">${escapeHtml(vm.statusNote || '')}</div>
+        </div>
+
+        <div class="card-soft">
+          <div class="stat-label" style="margin-bottom: 10px;">Jugador</div>
+          <select id="groups-player-select" class="doubles-select" onchange="handleSinglesGroupsPlayerChange()">
+            <option value="">Selecciona jugador</option>
+            ${(vm.playerOptions || []).map(function (option) {
+              const selected = actor && actor.id === option.id ? ' selected' : '';
+              return `<option value="${escapeHtml(option.id)}"${selected}>${escapeHtml(option.name)} · ${escapeHtml(option.placementLabel || 'Sin propuesta')}</option>`;
+            }).join('')}
+          </select>
+        </div>
+
+        ${actorCardHtml}
+
+        ${actionButtons ? `
+          <div class="card-soft">
+            <div class="stat-label" style="margin-bottom: 10px;">Acciones</div>
+            <div class="doubles-actions-grid">${actionButtons}</div>
+          </div>
+        ` : ''}
+
+        ${validationHtml}
+
+        ${groupsHtml}
+      </div>
+    `;
+  }
+
+  function renderSinglesGroupsConfigError(error) {
+    renderAdminGroupsEntryCard();
+    const root = document.getElementById('singles-groups-content');
+    if (!root) return;
+    const message = error && error.message ? error.message : String(error || 'Error desconocido');
+    root.innerHTML = `<div class="error">No se pudo cargar la configuracion de grupos: ${escapeHtml(message)}</div>`;
+  }
+
+  function handleSinglesGroupsPlayerChange() {
+    const select = document.getElementById('groups-player-select');
+    const playerId = select ? String(select.value || '') : '';
+    saveGroupsPlayerId(playerId);
+
+    google.script.run
+      .withSuccessHandler(renderSinglesGroupsConfig)
+      .withFailureHandler(renderSinglesGroupsConfigError)
+      .getSinglesGroupsViewModel(playerId);
+  }
+
+  function submitSinglesGroupsAction(action, extraPayload) {
+    const payload = extraPayload || {};
+    const playerId = getSavedGroupsPlayerId();
+
+    google.script.run
+      .withSuccessHandler(function (vm) {
+        renderSinglesGroupsConfig(vm);
+        loadAdminControl();
+      })
+      .withFailureHandler(renderSinglesGroupsConfigError)
+      .applySinglesGroupsActionFromUi({
+        action: action,
+        playerId: playerId,
+        selectedPlayerId: playerId,
+        targetGroupId: payload.targetGroupId || '',
+        targetSlot: payload.targetSlot || '',
+      });
+  }
+
+  function renderDoublesConfig(vm) {
+    currentDoublesVm = vm;
+    doublesIsLoading = false;
+    renderMyDayDoublesEntryCard();
+
+    const root = document.getElementById('doubles-config-content');
+    if (!root) return;
+
+    const actor = vm.actor || null;
+    const partnerOptionIds = actor && actor.partnerOptions
+      ? actor.partnerOptions.map(function (option) { return String(option.id || ''); })
+      : [];
+    const actorHasIncomingRequest = !!actor && actor.status === 'partner_pending' && !!actor.requestFromId;
+    const actorHasOutgoingRequest = !!actor && actor.status === 'partner_pending' && !!actor.requestToId && !actor.requestFromId;
+    const actorIsInteractionLocked = actorHasIncomingRequest || actorHasOutgoingRequest;
+
+    const actorCardHtml = actor ? `
+      <div class="card-soft doubles-panel doubles-actor-card">
+        <div class="stat-label" style="margin-bottom: 8px;">Tu estado</div>
+        <div class="row-between" style="align-items: flex-start;">
+          <div>
+            <div class="stat-value doubles-context-name" style="font-size: 20px;">${escapeHtml(actor.name)}</div>
+            <div class="helper doubles-context-copy" style="margin-top: 6px;">${escapeHtml(buildDoublesActorDetail(actor))}</div>
+          </div>
+          ${renderDoublesStatusPill(actor.statusLabel, actor.status)}
+        </div>
+      </div>
+    ` : `
+      <div class="card-soft doubles-panel">
+        <div class="empty">Selecciona tu nombre en Mi jornada para gestionar tu estado de dobles.</div>
+      </div>
+    `;
+
+    const actorConfirmationHtml = actor && actor.status === 'partner_confirmed' ? `
+      <div class="doubles-action-card doubles-action-card--success">
+        <div class="doubles-action-card__title">Partner confirmado</div>
+        <div class="doubles-action-card__detail">${escapeHtml(actor.partnerLabel ? `Solicitud aceptada. Jugaras con ${actor.partnerLabel}.` : 'La solicitud fue aceptada y tu pareja quedo confirmada.')}</div>
+        <div class="doubles-action-card__meta">Listo para el corte de dobles</div>
+      </div>
+    ` : '';
+
+    const actorWaitingHtml = actorHasOutgoingRequest ? `
+      <div class="doubles-action-card doubles-action-card--warning">
+        <div class="doubles-action-card__title">En espera de confirmacion</div>
+        <div class="doubles-action-card__detail">${escapeHtml(actor.requestToLabel ? `Tu solicitud a ${actor.requestToLabel} sigue pendiente.` : 'Tu solicitud de partner fue enviada y esta pendiente de respuesta.')}</div>
+        <div class="doubles-action-card__meta">Mientras esperas, check-in queda temporalmente bloqueado</div>
+      </div>
+    ` : '';
+
+    const actionButtons = actor ? `
+      <div class="card-soft doubles-panel doubles-actions-panel">
+        <div class="stat-label" style="margin-bottom: 10px;">Acciones</div>
+        <div class="doubles-action-card-grid">
+          ${actor.availableActions.canConfirmPartner ? renderDoublesActionCard('Aceptar solicitud', `Aceptar solicitud de ${actor.requestFromLabel || 'partner'}.`, 'confirm_partner', 'warning') : ''}
+          ${actor.availableActions.canRejectPartner ? renderDoublesActionCard('Rechazar solicitud', `No aceptar solicitud de ${actor.requestFromLabel || 'partner'}.`, 'reject_partner', 'danger') : ''}
+          ${!actorIsInteractionLocked && actor.availableActions.canOptIntoPool ? renderDoublesActionCard('Asigname un partner al azar', 'Entrar al pool para asignacion automatica al cierre.', 'opt_into_pool', 'primary') : ''}
+          ${!actorIsInteractionLocked && actor.availableActions.canDecline ? renderDoublesActionCard('Declino competir en dobles', 'Salir del proceso de dobles por ahora.', 'decline_doubles', 'neutral') : ''}
+        </div>
+      </div>
+    ` : '';
+
+    root.innerHTML = `
+      <div class="stack doubles-screen-stack">
+        <div class="grid-stats doubles-summary-grid">
+          <div class="stat doubles-stat">
+            <div class="stat-label">Eligible</div>
+            <div class="stat-value">${escapeHtml(vm.summary.eligible)}</div>
+          </div>
+          <div class="stat doubles-stat">
+            <div class="stat-label">Pool</div>
+            <div class="stat-value">${escapeHtml(vm.summary.pool)}</div>
+          </div>
+          <div class="stat doubles-stat">
+            <div class="stat-label">Pending</div>
+            <div class="stat-value">${escapeHtml(vm.summary.pending)}</div>
+          </div>
+          <div class="stat doubles-stat">
+            <div class="stat-label">Confirmed</div>
+            <div class="stat-value">${escapeHtml(vm.summary.confirmed)}</div>
+          </div>
+        </div>
+
+        <div class="card-soft doubles-panel doubles-player-context-card">
+          <div class="stat-label" style="margin-bottom: 8px;">Jugador desde Mi jornada</div>
+          <div class="stat-value doubles-context-name">${escapeHtml(actor ? actor.name : 'Sin seleccion activa')}</div>
+          <div class="helper doubles-context-copy" style="margin-top: 6px;">${escapeHtml(actor ? 'Esta pantalla usa automaticamente el jugador elegido en Mi jornada.' : 'Vuelve a Mi jornada y selecciona tu nombre para habilitar este check-in.')}</div>
+        </div>
+
+        ${actorCardHtml}
+
+        ${actorConfirmationHtml}
+
+        ${actorWaitingHtml}
+
+        <div class="card-soft doubles-panel doubles-note-card">
+          <div class="helper">${escapeHtml(vm.statusNote || '')}</div>
+        </div>
+
+        ${actionButtons}
+
+        <div class="card-soft doubles-panel doubles-partner-shell">
+          <div class="doubles-section-kicker">Check-in</div>
+          <div class="doubles-section-title">Elegir Partner</div>
+          <div class="helper doubles-section-copy" style="margin-top: 6px;">Revisa disponibilidad y toca una card para enviar una solicitud de partner.</div>
+          <div class="stack" style="gap: 10px;">
+            ${(vm.rows || []).map(function (row) {
+              const isPartnerCandidate = !!actor &&
+                !!actor.availableActions &&
+                !!actor.availableActions.canChoosePartner &&
+                !actorIsInteractionLocked &&
+                partnerOptionIds.indexOf(String(row.id || '')) >= 0;
+              const isAwaitingThisRow = !!actor &&
+                actor.status === 'partner_pending' &&
+                String(actor.requestToId || '') === String(row.id || '');
+              const rowClassName = isPartnerCandidate
+                ? 'doubles-row-card doubles-row-card--interactive'
+                : 'doubles-row-card';
+              const rowAttrs = isPartnerCandidate
+                ? ` role="button" tabindex="0" onclick="openDoublesPartnerRequestModal('${escapeHtml(row.id)}', '${escapeHtml(row.name)}')" onkeydown="handleDoublesPartnerCardKeydown(event, '${escapeHtml(row.id)}', '${escapeHtml(row.name)}')"`
+                : '';
+
+              return `
+                <div class="${rowClassName}"${rowAttrs}>
+                  <div>
+                    <div class="doubles-row-name">${escapeHtml(row.name)}</div>
+                    <div class="helper" style="margin-top: 6px;">${escapeHtml(row.detail)}</div>
+                    ${isPartnerCandidate ? '<div class="helper" style="margin-top: 8px;">Toca para enviar solicitud de partner.</div>' : ''}
+                  </div>
+                  ${isAwaitingThisRow ? '<span class="status-pill status-pending">Esperando confirmacion</span>' : renderDoublesStatusPill(row.statusLabel, row.status)}
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderDoublesConfigError(error) {
+    doublesIsLoading = false;
+    renderMyDayDoublesEntryCard();
+    const root = document.getElementById('doubles-config-content');
+    if (!root) return;
+    const message = error && error.message ? error.message : String(error || 'Error desconocido');
+    root.innerHTML = `<div class="error">No se pudo cargar la configuracion de dobles: ${escapeHtml(message)}</div>`;
+  }
+
+  function submitDoublesConfigAction(action) {
+    submitDoublesConfigActionWithTarget(action, '');
+  }
+
+  function submitDoublesConfigActionWithTarget(action, explicitTargetPlayerId) {
+    const playerId = getSavedPlayerId();
+    const targetPlayerId = String(explicitTargetPlayerId || '').trim();
+
+    if (!playerId) {
+      renderDoublesConfigError(new Error('Selecciona tu nombre antes de usar acciones de dobles.'));
+      return;
+    }
+
+    if (action === 'propose_partner') {
+      doublesLoadingTitle = 'Enviando solicitud de partner...';
+      doublesLoadingDetail = 'Estamos registrando tu solicitud y actualizando el estado del check-in.';
+    } else if (action === 'confirm_partner') {
+      doublesLoadingTitle = 'Confirmando partner...';
+      doublesLoadingDetail = 'Estamos aceptando la solicitud y actualizando la pareja confirmada.';
+    } else if (action === 'reject_partner') {
+      doublesLoadingTitle = 'Rechazando solicitud...';
+      doublesLoadingDetail = 'Estamos registrando tu respuesta y actualizando el estado del check-in.';
+    } else {
+      doublesLoadingTitle = 'Actualizando check-in...';
+      doublesLoadingDetail = 'Estamos aplicando tu accion y refrescando el estado del jugador seleccionado.';
+    }
+
+    doublesIsLoading = true;
+    currentDoublesVm = null;
+    renderMyDayDoublesEntryCard();
+    const root = document.getElementById('doubles-config-content');
+    if (root) {
+      root.innerHTML = buildDoublesLoadingHtml({
+        silent: true,
+        title: doublesLoadingTitle,
+        detail: doublesLoadingDetail,
+      });
+    }
+
+    google.script.run
+      .withSuccessHandler(function (vm) {
+        renderDoublesConfig(vm);
+      })
+      .withFailureHandler(renderDoublesConfigError)
+      .applyDoublesConfigActionFromUi({
+        action: action,
+        playerId: playerId,
+        targetPlayerId: targetPlayerId,
+      });
+  }
+
+  function renderDoublesActionCard(title, detail, actionName, tone) {
+    const toneClass = tone ? `doubles-action-card--${tone}` : 'doubles-action-card--neutral';
+    const meta = tone === 'warning'
+      ? 'Responder ahora'
+      : tone === 'danger'
+        ? 'Cancelar esta via'
+        : tone === 'primary'
+          ? 'Usar accion'
+          : 'Gestionar estado';
+    return `
+      <div class="doubles-action-card ${toneClass}" role="button" tabindex="0" onclick="submitDoublesConfigAction('${escapeHtml(actionName)}')" onkeydown="handleInlineActionCardKeydown(event, '${escapeHtml(actionName)}')">
+        <div class="doubles-action-card__title">${escapeHtml(title)}</div>
+        <div class="doubles-action-card__detail">${escapeHtml(detail)}</div>
+        <div class="doubles-action-card__meta">${escapeHtml(meta)}</div>
+      </div>
+    `;
+  }
+
+  function handleInlineActionCardKeydown(event, actionName) {
+    if (!event) return;
+    const key = String(event.key || '');
+    if (key !== 'Enter' && key !== ' ') return;
+
+    event.preventDefault();
+    submitDoublesConfigAction(actionName);
+  }
+
+  function openDoublesPartnerRequestModal(targetPlayerId, targetPlayerName) {
+    const actor = currentDoublesVm && currentDoublesVm.actor;
+    if (!actor || !targetPlayerId) return;
+
+    closeDoublesPartnerRequestModal();
+    document.body.insertAdjacentHTML('beforeend', `
+      <div id="doubles-partner-request-modal" style="
+        position: fixed;
+        inset: 0;
+        background: rgba(15,23,42,0.6);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+        padding: 16px;
+      ">
+        <div style="
+          background: white;
+          border-radius: 16px;
+          padding: 20px;
+          width: 100%;
+          max-width: 420px;
+          box-shadow: 0 20px 48px rgba(15,23,42,0.18);
+        ">
+          <div class="stat-label" style="margin-bottom: 10px;">Confirmacion</div>
+          <div class="stat-value" style="font-size: 20px; margin-top: 0;">Enviar solicitud a ${escapeHtml(targetPlayerName)}?</div>
+          <div class="helper" style="margin-top: 8px;">Se enviara la solicitud de partner a nombre de ${escapeHtml(actor.name)}.</div>
+          <div style="display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 18px;">
+            <button class="admin-action-button admin-action-button-secondary" type="button" onclick="closeDoublesPartnerRequestModal()">Cancelar</button>
+            <button class="admin-action-button" type="button" onclick="confirmDoublesPartnerRequest('${escapeHtml(targetPlayerId)}')">Enviar solicitud</button>
+          </div>
+        </div>
+      </div>
+    `);
+  }
+
+  function closeDoublesPartnerRequestModal() {
+    const modal = document.getElementById('doubles-partner-request-modal');
+    if (modal) modal.remove();
+  }
+
+  function confirmDoublesPartnerRequest(targetPlayerId) {
+    closeDoublesPartnerRequestModal();
+    submitDoublesConfigActionWithTarget('propose_partner', targetPlayerId);
+  }
+
+  function handleDoublesPartnerCardKeydown(event, targetPlayerId, targetPlayerName) {
+    if (!event) return;
+    const key = String(event.key || '');
+    if (key !== 'Enter' && key !== ' ') return;
+
+    event.preventDefault();
+    openDoublesPartnerRequestModal(targetPlayerId, targetPlayerName);
+  }
+
+  function buildDoublesActorDetail(actor) {
+    if (actor.status === 'partner_confirmed' && actor.partnerLabel) {
+      return `Partner confirmado: ${actor.partnerLabel}`;
+    }
+    if (actor.status === 'partner_pending' && actor.requestFromLabel) {
+      return `Solicitud recibida de ${actor.requestFromLabel}`;
+    }
+    if (actor.status === 'partner_pending' && actor.requestToLabel) {
+      return `Solicitud enviada a ${actor.requestToLabel}`;
+    }
+    if (actor.status === 'partner_pending') {
+      return 'Esperando confirmacion del partner seleccionado.';
+    }
+    if (actor.status === 'pool') return 'Entraste al pool para asignacion automatica.';
+    if (actor.status === 'opted_out') return 'Declinaste competir en dobles.';
+    return 'Aun no confirmas partner.';
+  }
+
+  function renderDoublesStatusPill(label, status) {
+    const value = String(status || '').trim();
+    let cls = 'status-closed';
+    if (value === 'partner_confirmed') cls = 'status-done';
+    else if (value === 'partner_pending') cls = 'status-pending';
+    else if (value === 'pool') cls = 'status-live';
+
+    return `<span class="status-pill ${cls}">${escapeHtml(label || value || '-')}</span>`;
+  }
+
+  function loadAdminControl() {
+    const root = document.getElementById('admin-control-content');
+    if (!root) return;
+
+    root.innerHTML = '<div class="loading">Cargando panel de control...</div>';
+    setAdminActionFeedback('');
+
+    google.script.run
+      .withSuccessHandler(function (vm) {
+        renderAdminControl(vm);
+      })
+      .withFailureHandler(renderAdminControlError)
+      .getAdminControlViewModel();
+  }
+
+  function renderAdminControl(vm) {
+    currentAdminVm = vm;
+    renderAdminGroupsEntryCard();
+
+    const root = document.getElementById('admin-control-content');
+    if (!root) return;
+
+    const startInput = document.getElementById('admin-start-ts-input');
+    if (startInput && !document.activeElement.isSameNode(startInput)) {
+      startInput.value = vm.tournamentStartTs || '';
+    }
+
+    updateAdminToggleClockButton(vm);
+    updateAdminCheckpointButtons(vm);
+
+    const currentBlockHtml = vm.currentBlock
+      ? `
+        <div class="card-soft">
+          <div class="stat-label" style="margin-bottom: 10px;">Bloque actual</div>
+          <div class="admin-kv">
+            <div class="admin-kv-label">Bloque</div>
+            <div class="admin-code">${escapeHtml(vm.currentBlock.id)} · ${escapeHtml(vm.currentBlock.phaseLabel || vm.currentBlock.phaseType)}</div>
+            <div class="admin-kv-label">Estado</div>
+            <div class="admin-code">${escapeHtml(vm.currentBlock.status || '-')}</div>
+            <div class="admin-kv-label">Inicio</div>
+            <div class="admin-code">${escapeHtml(vm.currentBlock.startTs || '-')}</div>
+            <div class="admin-kv-label">Cierre suave</div>
+            <div class="admin-code">${escapeHtml(vm.currentBlock.closeSignalTs || '-')}</div>
+            <div class="admin-kv-label">Hard close</div>
+            <div class="admin-code">${escapeHtml(vm.currentBlock.hardCloseTs || '-')}</div>
+            <div class="admin-kv-label">Fin</div>
+            <div class="admin-code">${escapeHtml(vm.currentBlock.endTs || '-')}</div>
+            <div class="admin-kv-label">Publicado</div>
+            <div class="admin-code">${escapeHtml(vm.currentBlock.publishedAt || '-')}</div>
+            <div class="admin-kv-label">Cerrado</div>
+            <div class="admin-code">${escapeHtml(vm.currentBlock.closedAt || '-')}</div>
+          </div>
+        </div>
+      `
+      : `
+        <div class="card-soft">
+          <div class="stat-label" style="margin-bottom: 10px;">Bloque actual</div>
+          <div class="empty" style="padding: 14px;">No hay bloque activo.</div>
+        </div>
+      `;
+
+    root.innerHTML = `
+      <div class="admin-summary-grid">
+        <div class="card-soft">
+          <div class="stat-label" style="margin-bottom: 10px;">Estado de torneo</div>
+          <div class="admin-kv">
+            <div class="admin-kv-label">Tournament status</div>
+            <div class="admin-code">${escapeHtml(vm.tournamentStatus || '-')}</div>
+            <div class="admin-kv-label">Hora base</div>
+            <div class="admin-code">${escapeHtml(vm.tournamentStartTs || '-')}</div>
+            <div class="admin-kv-label">Duracion bloque</div>
+            <div class="admin-code">${escapeHtml(vm.timing.totalMinutes || 0)} min (${escapeHtml(vm.timing.playMinutes || 0)} juego / ${escapeHtml(vm.timing.closeMinutes || 0)} cierre / ${escapeHtml(vm.timing.transitionMinutes || 0)} transicion)</div>
+            <div class="admin-kv-label">App TZ</div>
+            <div class="admin-code">${escapeHtml(vm.timeZone && vm.timeZone.appTimeZone || '-')}</div>
+            <div class="admin-kv-label">Generado</div>
+            <div class="admin-code">${escapeHtml(vm.generatedAt || '-')}</div>
+          </div>
+        </div>
+
+        ${currentBlockHtml}
+
+        <div class="card-soft">
+          <div class="stat-label" style="margin-bottom: 10px;">Resumen de datos</div>
+          <div class="admin-kv">
+            <div class="admin-kv-label">Players</div>
+            <div class="admin-code">${escapeHtml(vm.counts.players)}</div>
+            <div class="admin-kv-label">Groups</div>
+            <div class="admin-code">${escapeHtml(vm.counts.groups)}</div>
+            <div class="admin-kv-label">Matches</div>
+            <div class="admin-code">${escapeHtml(vm.counts.matches)}</div>
+            <div class="admin-kv-label">Blocks</div>
+            <div class="admin-code">${escapeHtml(vm.counts.blocks)}</div>
+            <div class="admin-kv-label">Doubles teams</div>
+            <div class="admin-code">${escapeHtml(vm.counts.doublesTeams)}</div>
+            <div class="admin-kv-label">Scheduled matches</div>
+            <div class="admin-code">${escapeHtml(vm.counts.scheduledMatches)}</div>
+            <div class="admin-kv-label">Live matches</div>
+            <div class="admin-code">${escapeHtml(vm.counts.liveMatches)}</div>
+            <div class="admin-kv-label">Final matches</div>
+            <div class="admin-code">${escapeHtml(vm.counts.finalMatches)}</div>
+          </div>
+        </div>
+
+        <div class="card-soft">
+          <div class="stat-label" style="margin-bottom: 10px;">Dobles y trigger</div>
+          <div class="admin-kv">
+            <div class="admin-kv-label">Eligible</div>
+            <div class="admin-code">${escapeHtml(vm.doublesSummary.eligible || 0)}</div>
+            <div class="admin-kv-label">Partner confirmed</div>
+            <div class="admin-code">${escapeHtml(vm.doublesSummary.partner_confirmed || 0)}</div>
+            <div class="admin-kv-label">Pool</div>
+            <div class="admin-code">${escapeHtml(vm.doublesSummary.pool || 0)}</div>
+            <div class="admin-kv-label">Trigger enabled</div>
+            <div class="admin-code">${escapeHtml(vm.trigger.enabled ? 'TRUE' : 'FALSE')}</div>
+            <div class="admin-kv-label">Trigger count</div>
+            <div class="admin-code">${escapeHtml(vm.trigger.triggerCount || 0)}</div>
+            <div class="admin-kv-label">Last run</div>
+            <div class="admin-code">${escapeHtml(vm.trigger.lastRunAt || '-')}</div>
+            <div class="admin-kv-label">Sheet / Script TZ</div>
+            <div class="admin-code">${escapeHtml(vm.timeZone ? `${vm.timeZone.spreadsheetTimeZone || '-'} / ${vm.timeZone.scriptTimeZone || '-'}` : '-')}</div>
+            <div class="admin-kv-label">Last error</div>
+            <div class="admin-code">${escapeHtml(vm.trigger.lastError || '-')}</div>
+            <div class="admin-kv-label">Confirmar grupos</div>
+            <div class="admin-code">${escapeHtml(vm.checkpoints.canConfirmGroups ? 'Disponible' : 'No aplica')}</div>
+            <div class="admin-kv-label">Final dobles</div>
+            <div class="admin-code">${escapeHtml(vm.checkpoints.canScheduleDoublesFinal ? 'Disponible' : 'No aplica')}</div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    if (vm.lastActionMessage) {
+      setAdminActionFeedback(vm.lastActionMessage);
+    }
+  }
+
+  function renderAdminControlError(error) {
+    renderAdminGroupsEntryCard();
+    const root = document.getElementById('admin-control-content');
+    if (!root) return;
+
+    const message = error && error.message ? error.message : String(error || 'Error desconocido');
+    root.innerHTML = `<div class="error">No se pudo cargar el panel de control: ${escapeHtml(message)}</div>`;
+  }
+
+  function saveTournamentStartTsFromAdmin() {
+    const input = document.getElementById('admin-start-ts-input');
+    const value = input ? input.value : '';
+    runAdminAction('Guardando hora base...', 'Hora base guardada.', function () {
+      google.script.run
+        .withSuccessHandler(handleAdminActionSuccess)
+        .withFailureHandler(handleAdminActionError)
+        .setTournamentStartTsFromUi(value);
+    });
+  }
+
+  function setTournamentStartNowFromAdmin() {
+    runAdminAction('Guardando hora base actual...', 'Hora base actualizada.', function () {
+      google.script.run
+        .withSuccessHandler(handleAdminActionSuccess)
+        .withFailureHandler(handleAdminActionError)
+        .setTournamentStartNowFromUi();
+    });
+  }
+
+  function initializeTournamentFlowV2FromAdmin() {
+    runAdminAction('Reseteando flujo V2...', 'Flujo V2 reseteado.', function () {
+      google.script.run
+        .withSuccessHandler(handleAdminActionSuccess)
+        .withFailureHandler(handleAdminActionError)
+        .initializeTournamentFlowV2FromUi();
+    });
+  }
+
+  function seedDemoDoublesFromAdmin() {
+    runAdminAction('Aplicando helper de dobles demo...', 'Helper de dobles demo aplicado.', function () {
+      google.script.run
+        .withSuccessHandler(handleAdminActionSuccess)
+        .withFailureHandler(handleAdminActionError)
+        .seedDemoDoublesConfigFromUi();
+    });
+  }
+
+  function generateInitialDoublesFromAdmin() {
+    runAdminAction('Generando bloque inicial de dobles...', '', function () {
+      google.script.run
+        .withSuccessHandler(handleAdminActionSuccess)
+        .withFailureHandler(handleAdminActionError)
+        .setupDoublesStageFromUi();
+    });
+  }
+
+  function confirmSinglesGroupsFromAdmin() {
+    runAdminAction('Confirmando grupos de singles...', '', function () {
+      google.script.run
+        .withSuccessHandler(handleAdminActionSuccess)
+        .withFailureHandler(handleAdminActionError)
+        .confirmSinglesGroupsFromUi();
+    });
+  }
+
+  function scheduleDoublesFinalFromAdmin() {
+    runAdminAction('Programando final de dobles...', '', function () {
+      google.script.run
+        .withSuccessHandler(handleAdminActionSuccess)
+        .withFailureHandler(handleAdminActionError)
+        .scheduleDoublesFinalFromUi();
+    });
+  }
+
+  function runTickNowFromAdmin() {
+    runAdminAction('Ejecutando tick manual...', '', function () {
+      google.script.run
+        .withSuccessHandler(handleAdminActionSuccess)
+        .withFailureHandler(handleAdminActionError)
+        .runTournamentClockNowFromUi();
+    });
+  }
+
+  function toggleClockTriggerFromAdmin() {
+    const enabled = currentAdminVm && currentAdminVm.trigger ? !!currentAdminVm.trigger.enabled : false;
+    const nextValue = !enabled;
+    runAdminAction(nextValue ? 'Reanudando reloj automatico...' : 'Pausando reloj automatico...', '', function () {
+      google.script.run
+        .withSuccessHandler(handleAdminActionSuccess)
+        .withFailureHandler(handleAdminActionError)
+        .setClockTriggerEnabledFromUi(nextValue);
+    });
+  }
+
+  function startDemoTournamentNowFromAdmin() {
+    runAdminAction('Iniciando simulacion ahora...', '', function () {
+      google.script.run
+        .withSuccessHandler(handleAdminActionSuccess)
+        .withFailureHandler(handleAdminActionError)
+        .startDemoTournamentNowFromUi();
+    });
+  }
+
+  function runAdminAction(loadingText, fallbackSuccessText, executor) {
+    if (adminActionInFlight) return;
+    adminActionInFlight = true;
+    setAdminButtonsDisabled(true);
+    setAdminActionFeedback(loadingText || 'Procesando...');
+    window.__adminFallbackSuccessText = fallbackSuccessText || '';
+    executor();
+  }
+
+  function handleAdminActionSuccess(vm) {
+    adminActionInFlight = false;
+    setAdminButtonsDisabled(false);
+    renderAdminControl(vm);
+    refreshCurrentPlayerExperience({ silent: true, force: true });
+    if (!vm || !vm.lastActionMessage) {
+      setAdminActionFeedback(window.__adminFallbackSuccessText || 'Operacion completada.');
+    }
+  }
+
+  function handleAdminActionError(error) {
+    adminActionInFlight = false;
+    setAdminButtonsDisabled(false);
+    const message = error && error.message ? error.message : String(error || 'Error desconocido');
+    setAdminActionFeedback(message, true);
+  }
+
+  function setAdminButtonsDisabled(disabled) {
+    const buttons = document.querySelectorAll('.admin-action-button');
+    buttons.forEach(function (button) {
+      button.disabled = disabled;
+    });
+  }
+
+  function updateAdminToggleClockButton(vm) {
+    const button = document.getElementById('admin-toggle-clock-button');
+    if (!button) return;
+    const enabled = vm && vm.trigger ? !!vm.trigger.enabled : false;
+    button.textContent = enabled ? 'Pausar reloj' : 'Reanudar reloj';
+  }
+
+  function updateAdminCheckpointButtons(vm) {
+    const confirmGroupsButton = document.querySelector('button[onclick="confirmSinglesGroupsFromAdmin()"]');
+    if (confirmGroupsButton) {
+      confirmGroupsButton.disabled = !(vm && vm.checkpoints && vm.checkpoints.canConfirmGroups);
+    }
+
+    const doublesFinalButton = document.querySelector('button[onclick="scheduleDoublesFinalFromAdmin()"]');
+    if (doublesFinalButton) {
+      doublesFinalButton.disabled = !(vm && vm.checkpoints && vm.checkpoints.canScheduleDoublesFinal);
+    }
+  }
+
+  function setAdminActionFeedback(text, isError) {
+    const el = document.getElementById('admin-action-feedback');
+    if (!el) return;
+    el.textContent = text || '';
+    el.style.color = isError ? '#991b1b' : '';
+  }
+
+  function renderAdminGroupsEntryCard() {
+    const root = document.getElementById('admin-groups-entry-card');
+    if (!root) return;
+
+    const state = buildAdminGroupsEntryState();
+    const attrs = state.disabled
+      ? ''
+      : ' role="button" tabindex="0" onclick="setActiveAppScreen(\'groups\')" onkeydown="handleScreenEntryCardKeydown(event, \'groups\')"';
+    const className = state.disabled
+      ? 'card-soft touch-card touch-card--disabled'
+      : 'card-soft touch-card touch-card--interactive';
+
+    root.innerHTML = `
+      <div class="${className}"${attrs}>
+        <div class="row-between" style="align-items: flex-start;">
+          <div>
+            <div class="stat-label">Subpantalla</div>
+            <div class="stat-value" style="font-size: 20px; margin-top: 8px;">Grupos singles</div>
+            <div class="helper" style="margin-top: 6px;">${escapeHtml(state.detail)}</div>
+          </div>
+          <span class="status-pill ${state.badgeClass}">${escapeHtml(state.badgeLabel)}</span>
+        </div>
+
+        <div class="touch-card__cta ${state.disabled ? 'touch-card__cta--disabled' : 'touch-card__cta--active'}" style="margin-top: 14px;">
+          <div class="touch-card__cta-label">${escapeHtml(state.ctaLabel)}</div>
+          ${state.helperText ? `<div class="helper" style="margin-top: 8px;">${escapeHtml(state.helperText)}</div>` : ''}
+        </div>
+      </div>
+    `;
+  }
+
+  function buildAdminGroupsEntryState() {
+    const vm = currentSinglesGroupsVm || {};
+    const summary = vm.summary || {};
+    const adminVm = currentAdminVm || {};
+    const status = String(vm.tournamentStatus || adminVm.tournamentStatus || '').trim();
+
+    let badgeLabel = 'Listo';
+    let badgeClass = 'status-done';
+
+    if (status === 'awaiting_singles_group_confirmation') {
+      badgeLabel = 'Abierto';
+      badgeClass = 'status-live';
+    } else if ((summary.confirmedGroups || 0) > 0 || status === 'running_groups' || status === 'running_singles_knockout') {
+      badgeLabel = 'Cerrado';
+      badgeClass = 'status-closed';
+    }
+
+    return {
+      disabled: false,
+      badgeLabel: badgeLabel,
+      badgeClass: badgeClass,
+      detail: 'Revisa la propuesta, ajusta slots y confirma el checkpoint de grupos desde Control.',
+      ctaLabel: 'Abrir editor de grupos',
+      helperText: badgeLabel === 'Abierto'
+        ? 'La ventana de confirmacion esta activa.'
+        : 'Esta vista queda subsumida dentro de Control como acceso operativo.',
+    };
+  }
+
+  function renderPlayerSelector(players) {
+    const select = document.getElementById('my-player-select');
+    if (!select) return;
+
+    if (!players || players.length === 0) {
+      select.innerHTML = '<option value="">No hay jugadores disponibles</option>';
+      renderMyDayDoublesEntryCard();
+      return;
+    }
+
+    const savedPlayerId = getSavedPlayerId();
+
+    const options = players.map(p => {
+      const selected = savedPlayerId === p.id ? ' selected' : '';
+      return `<option value="${escapeHtml(p.id)}"${selected}>${escapeHtml(p.name)} · ${escapeHtml(p.id)}</option>`;
+    });
+
+    select.innerHTML =
+      '<option value="">Selecciona para ver tu jornada</option>' +
+      options.join('');
+
+    if (savedPlayerId && players.some(p => p.id === savedPlayerId)) {
+      loadMyDayFromSelect(true);
+      return;
+    }
+
+    renderMyDayDoublesEntryCard();
+  }
+
+  function loadMyDayFromSelect(isAutoLoad) {
+    const select = document.getElementById('my-player-select');
+    const playerId = select.value;
+
+    if (!playerId) {
+      savePlayerId('');
+      currentMyDayVm = null;
+      myDayClockSnapshot = null;
+      const root = document.getElementById('myday-content');
+      if (root) {
+        root.innerHTML = '<div class="empty">Selecciona para ver tu jornada.</div>';
+      }
+      loadDoublesConfig({ silent: true });
+      return;
+    }
+
+    savePlayerId(playerId);
+    loadDoublesConfig({ silent: true });
+    loadMyDayForPlayer(playerId, { silent: !!isAutoLoad });
+  }
+
+  function loadMyDayForPlayer(playerId, options) {
+    const opts = options || {};
+    const silent = !!opts.silent;
+    const root = document.getElementById('myday-content');
+    if (!root || !playerId || myDayLoadInFlight) return;
+
+    myDayLoadInFlight = true;
+
+    if (!silent) {
+      root.innerHTML = '<div class="loading">Cargando jornada...</div>';
+    }
+
+    google.script.run
+      .withSuccessHandler(function (vm) {
+        myDayLoadInFlight = false;
+        myDayLastSuccessAt = new Date();
+        myDayLastErrorMessage = '';
+        renderMyDay(vm);
+      })
+      .withFailureHandler(function (error) {
+        myDayLoadInFlight = false;
+        myDayLastErrorMessage = error && error.message ? error.message : String(error || 'Error desconocido');
+
+        if (!silent) {
+          renderMyDayError(error);
+        } else {
+          updateMyDayClockHud();
+        }
+      })
+      .getMyDayViewModel(playerId);
+  }
+
+  function refreshCurrentPlayerExperience(options) {
+    const opts = options || {};
+    const playerId = getSavedPlayerId();
+    const activeScreen = getSavedAppScreen();
+
+    if (!playerId) return;
+
+    if (!(activeScreen === 'myday' || activeScreen === 'doubles' || opts.force)) return;
+    if (myDayHeartbeatInFlight) return;
+
+    myDayHeartbeatInFlight = true;
+
+    google.script.run
+      .withSuccessHandler(function () {
+        myDayHeartbeatInFlight = false;
+        loadMyDayForPlayer(playerId, { silent: opts.silent !== false });
+        loadDoublesConfig({ silent: opts.silent !== false });
+      })
+      .withFailureHandler(function () {
+        myDayHeartbeatInFlight = false;
+        loadMyDayForPlayer(playerId, { silent: opts.silent !== false });
+        loadDoublesConfig({ silent: opts.silent !== false });
+      })
+      .syncTournamentClockHeartbeatFromUi();
+  }
+
+  function refreshMyDayNow() {
+    refreshCurrentPlayerExperience({ silent: false });
+  }
+
+  function renderMyDay(vm) {
+    currentMyDayVm = vm;
+    myDayClockSnapshot = {
+      internalNowMs: parseCanonicalDateTime(vm && vm.clock ? vm.clock.internalNowTs : vm.generatedAt),
+      realNowMs: parseCanonicalDateTime(vm && vm.clock ? vm.clock.realNowTs || vm.generatedAt : vm.generatedAt),
+      isRunning: !!(vm && vm.clock && vm.clock.isRunning),
+      health: String(vm && vm.clock && vm.clock.clockHealth || 'ok'),
+      healthMessage: String(vm && vm.clock && vm.clock.clockHealthMessage || ''),
+      clientCapturedAtMs: Date.now(),
+      lastExpectedStatus: '',
+    };
+    renderMyDayDoublesEntryCard();
+
+    const root = document.getElementById('myday-content');
+    const playerRoleUi = getMyDayPlayerRoleUi(vm);
+    const matchRoleUi = getMyDayMatchRoleUi(vm);
+    const nextCommitment = buildMyDayCommitmentLabel(vm);
+    const cta = buildMyDayCta(vm);
+    const matchMeta = vm.currentMatch || null;
+
+    let playerBadgeHtml = '';
+    if (playerRoleUi.show) {
+      playerBadgeHtml = `<span class="status-pill ${playerRoleUi.className}">${escapeHtml(playerRoleUi.label)}</span>`;
+    }
+
+    let matchCardHtml = `
+      <div class="card-soft touch-card">
+        <div class="stat-label">Compromiso del bloque</div>
+        <div class="stat-value" style="font-size: 18px; margin-top: 8px;">${escapeHtml(nextCommitment.title)}</div>
+        <div class="helper" style="margin-top: 6px;">${escapeHtml(nextCommitment.detail)}</div>
+      </div>
+    `;
+
+    if (matchMeta) {
+      let matchBadgeHtml = '';
+      if (matchRoleUi.show) {
+        matchBadgeHtml = `<span class="status-pill ${matchRoleUi.className}">${escapeHtml(matchRoleUi.label)}</span>`;
+      }
+
+      const isInteractiveCard = !cta.disabled;
+      const matchCardAttrs = isInteractiveCard
+        ? ' role="button" tabindex="0" onclick="openMatchCapture()" onkeydown="handleTouchCardKeydown(event)"'
+        : '';
+      const matchCardClassName = isInteractiveCard
+        ? 'card-soft touch-card touch-card--interactive'
+        : 'card-soft touch-card';
+      const actionHintHtml = `
+        <div class="touch-card__cta ${isInteractiveCard ? 'touch-card__cta--active' : 'touch-card__cta--disabled'}" style="margin-top: 14px;">
+          <div class="touch-card__cta-label">${escapeHtml(cta.label)}</div>
+          ${cta.helperText ? `<div class="helper" style="margin-top: 8px;">${escapeHtml(cta.helperText)}</div>` : ''}
+        </div>
+      `;
+
+      matchCardHtml = `
+        <div class="${matchCardClassName}"${matchCardAttrs}>
+          <div class="row-between">
+            <div>
+              <span class="badge">Mesa ${escapeHtml(matchMeta.tableNo)}</span>
+              <span class="helper" style="margin-left:8px;">${escapeHtml(matchMeta.phaseLabel)}</span>
+            </div>
+            ${matchBadgeHtml}
+          </div>
+
+          <div style="margin-top: 12px;">
+            <div class="stat-label">Compromiso del bloque</div>
+            <div class="stat-value" style="margin-top: 8px;">
+              ${renderResponsiveMatchup(matchMeta)}
+            </div>
+            <div class="helper" style="margin-top: 6px;">${escapeHtml(nextCommitment.detail)}</div>
+          </div>
+
+          ${actionHintHtml}
+        </div>
+      `;
+    }
+
+    const timelineHtml = renderMyDayTimeline(vm.timeline || []);
+
+    root.innerHTML = `
+      <div class="stack">
+        <div class="card-soft">
+          <div class="row-between">
+            <div>
+              <div class="stat-label">Bloque actual</div>
+              <div class="stat-value" style="font-size: 20px;">
+                ${vm.currentBlock ? `Bloque ${escapeHtml(vm.currentBlock.id)}` : 'Sin bloque activo'}
+              </div>
+              <div class="helper" style="margin-top: 6px;">
+                ${vm.currentBlock ? escapeHtml(vm.currentBlock.phaseLabel || '') : 'No hay fase en curso'}
+              </div>
+            </div>
+            <span class="status-pill status-done">${escapeHtml(formatTournamentStateLabel(vm.currentBlock))}</span>
+          </div>
+        </div>
+
+        <div class="card-soft myday-clock-card">
+          <div class="row-between" style="align-items: flex-start; gap: 12px;">
+            <div>
+              <div class="stat-label">Reloj interno</div>
+              <div class="myday-clock-value" id="myday-clock-now">--:--:--</div>
+              <div class="helper myday-clock-meta" id="myday-clock-sync">Esperando sincronizacion...</div>
+            </div>
+            <span class="status-pill status-pending" id="myday-clock-status-pill">Sin snapshot</span>
+          </div>
+
+          <div class="myday-clock-grid">
+            <div class="myday-clock-metric">
+              <div class="stat-label" id="myday-clock-next-label">Proximo hito</div>
+              <div class="stat-value" style="font-size: 18px;" id="myday-clock-next-value">-</div>
+            </div>
+            <div class="myday-clock-metric">
+              <div class="stat-label">Estado esperado</div>
+              <div class="stat-value" style="font-size: 18px;" id="myday-clock-expected-status">-</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card-soft">
+          <div class="row-between">
+            <div>
+              <div class="stat-label">Jugador</div>
+              <div class="stat-value">${escapeHtml(vm.player.fullName || vm.player.name)}</div>
+              <div class="helper" style="margin-top: 6px;">${escapeHtml(vm.player.name)} · ID ${escapeHtml(vm.player.id)}</div>
+            </div>
+            ${playerBadgeHtml}
+          </div>
+        </div>
+
+        ${matchCardHtml}
+
+        ${timelineHtml}
+      </div>
+    `;
+
+    updateMyDayClockHud(true);
+  }
+
+  function updateMyDayClockHud(forceRefreshCheck) {
+    const clockValueEl = document.getElementById('myday-clock-now');
+    const syncEl = document.getElementById('myday-clock-sync');
+    const nextLabelEl = document.getElementById('myday-clock-next-label');
+    const nextValueEl = document.getElementById('myday-clock-next-value');
+    const expectedStatusEl = document.getElementById('myday-clock-expected-status');
+    const statusPillEl = document.getElementById('myday-clock-status-pill');
+
+    if (!clockValueEl || !syncEl || !nextLabelEl || !nextValueEl || !expectedStatusEl || !statusPillEl) {
+      return;
+    }
+
+    const vm = currentMyDayVm;
+    const snapshot = myDayClockSnapshot;
+    const clock = vm && vm.clock ? vm.clock : null;
+    const clockHealth = String(clock && clock.clockHealth || snapshot && snapshot.health || 'ok');
+    const clockHealthMessage = String(clock && clock.clockHealthMessage || snapshot && snapshot.healthMessage || '');
+
+    if (!vm || !snapshot || (!snapshot.internalNowMs && clockHealth !== 'missing_start_ts')) {
+      clockValueEl.textContent = '--:--:--';
+      syncEl.textContent = 'Selecciona un jugador para ver su reloj interno.';
+      nextLabelEl.textContent = 'Proximo hito';
+      nextValueEl.textContent = '-';
+      expectedStatusEl.textContent = '-';
+      statusPillEl.textContent = 'Sin snapshot';
+      statusPillEl.className = 'status-pill status-pending';
+      return;
+    }
+
+    if (clockHealth === 'missing_start_ts' || clockHealth === 'invalid_anchor') {
+      clockValueEl.textContent = '--:--:--';
+      nextLabelEl.textContent = 'Proximo hito';
+      nextValueEl.textContent = 'Configura inicio';
+      expectedStatusEl.textContent = 'Sin referencia';
+
+      const syncParts = [];
+      if (snapshot.realNowMs) {
+        syncParts.push(`hora real ${formatClockStamp(snapshot.realNowMs)}`);
+      }
+      if (myDayLastSuccessAt) {
+        syncParts.push(`actualizado hace ${formatRelativeSeconds(Date.now() - myDayLastSuccessAt.getTime())}`);
+      }
+      if (clockHealthMessage) {
+        syncParts.push(clockHealthMessage);
+      }
+      if (myDayLastErrorMessage) {
+        syncParts.push(`error: ${myDayLastErrorMessage}`);
+      }
+
+      syncEl.textContent = syncParts.join(' | ') || 'Falta configurar tournament_start_ts.';
+      statusPillEl.textContent = 'Config invalida';
+      statusPillEl.className = 'status-pill status-closed';
+      return;
+    }
+
+    const elapsedClientMs = Date.now() - snapshot.clientCapturedAtMs;
+    const internalNowMs = snapshot.internalNowMs + (snapshot.isRunning ? elapsedClientMs : 0);
+    const tournamentStartMs = parseCanonicalDateTime(vm.clock && vm.clock.tournamentStartTs);
+    const realNowMs = snapshot.realNowMs ? snapshot.realNowMs + elapsedClientMs : Date.now();
+    const currentBlock = vm.currentBlock || null;
+    const beforeTournamentStart = !!tournamentStartMs && internalNowMs < tournamentStartMs;
+    const expectedStatus = getExpectedBlockStatus(currentBlock, internalNowMs);
+    const nextMilestone = getNextBlockMilestone(currentBlock, internalNowMs);
+    const snapshotStatus = currentBlock ? String(currentBlock.status || '').trim() : '';
+    const drifted = !!currentBlock && expectedStatus && snapshotStatus && expectedStatus !== snapshotStatus;
+    const lastRunAt = parseCanonicalDateTime(clock && clock.triggerLastRunAt);
+
+    if (clockHealth === 'missing_start_ts') {
+      clockValueEl.textContent = '--:--:--';
+    } else {
+      clockValueEl.textContent = tournamentStartMs
+        ? beforeTournamentStart
+          ? formatCountdown(tournamentStartMs - internalNowMs)
+          : formatElapsedClock(internalNowMs - tournamentStartMs)
+        : '--:--:--';
+    }
+    nextLabelEl.textContent = nextMilestone.label;
+    nextValueEl.textContent = nextMilestone.value;
+    expectedStatusEl.textContent = expectedStatus ? formatTournamentStateLabel({ status: expectedStatus }) : 'Sin bloque';
+
+    if (clockHealth === 'missing_start_ts') {
+      statusPillEl.textContent = 'Config invalida';
+      statusPillEl.className = 'status-pill status-closed';
+    } else if (clockHealth === 'autocorrected') {
+      statusPillEl.textContent = 'Autocorregido';
+      statusPillEl.className = 'status-pill status-pending';
+    } else if (beforeTournamentStart) {
+      statusPillEl.textContent = 'Aun no inicia';
+      statusPillEl.className = 'status-pill status-pending';
+    } else if (!snapshot.isRunning) {
+      statusPillEl.textContent = 'Pausado';
+      statusPillEl.className = 'status-pill status-closed';
+    } else if (drifted) {
+      statusPillEl.textContent = 'Esperando refresh';
+      statusPillEl.className = 'status-pill status-pending';
+    } else {
+      statusPillEl.textContent = expectedStatus ? 'Sincronizado' : 'Sin bloque';
+      statusPillEl.className = expectedStatus ? 'status-pill status-done' : 'status-pill status-closed';
+    }
+
+    const syncParts = [];
+    if (internalNowMs) {
+      syncParts.push(`hora interna ${formatClockStamp(internalNowMs)}`);
+    }
+    if (realNowMs) {
+      syncParts.push(`hora real ${formatClockStamp(realNowMs)}`);
+    }
+    if (tournamentStartMs) {
+      syncParts.push(`inicio torneo ${formatClockStamp(tournamentStartMs)}`);
+    }
+    if (myDayLastSuccessAt) {
+      syncParts.push(`actualizado hace ${formatRelativeSeconds(Date.now() - myDayLastSuccessAt.getTime())}`);
+    }
+    if (lastRunAt) {
+      syncParts.push(`ultimo tick ${formatClockTime(lastRunAt)}`);
+    }
+    if (!snapshot.isRunning) {
+      syncParts.push('reloj pausado');
+    }
+    if (clockHealthMessage) {
+      syncParts.push(clockHealthMessage);
+    }
+    if (myDayLastErrorMessage) {
+      syncParts.push(`error: ${myDayLastErrorMessage}`);
+    } else if (drifted) {
+      syncParts.push('El reloj interno ya cruzo un hito; refrescando snapshot...');
+    }
+
+    syncEl.textContent = syncParts.join(' · ');
+
+    if (currentBlock && (forceRefreshCheck || expectedStatus !== snapshot.lastExpectedStatus)) {
+      snapshot.lastExpectedStatus = expectedStatus;
+
+      if (!forceRefreshCheck && drifted) {
+        refreshCurrentPlayerExperience({ silent: true });
+      }
+    }
+  }
+
+  function handleTouchCardKeydown(event) {
+    if (!event) return;
+    const key = String(event.key || '');
+    if (key !== 'Enter' && key !== ' ') return;
+
+    event.preventDefault();
+    openMatchCapture();
+  }
+
+  function renderMyDayDoublesEntryCard() {
+    const root = document.getElementById('myday-doubles-entry-card');
+    if (!root) return;
+
+    const state = buildMyDayDoublesEntryState();
+    const attrs = state.disabled
+      ? ''
+      : ' role="button" tabindex="0" onclick="openDoublesCheckInScreen()" onkeydown="handleScreenEntryCardKeydown(event, \'doubles\')"';
+    const className = state.disabled
+      ? 'card-soft touch-card touch-card--disabled'
+      : 'card-soft touch-card touch-card--interactive';
+
+    root.innerHTML = `
+      <div class="${className}"${attrs}>
+        <div class="row-between" style="align-items: flex-start;">
+          <div>
+            <div class="stat-label">Subpantalla</div>
+            <div class="stat-value" style="font-size: 20px; margin-top: 8px;">Check-in en dobles</div>
+            <div class="helper" style="margin-top: 6px;">${escapeHtml(state.detail)}</div>
+          </div>
+          <span class="status-pill ${state.badgeClass}">${escapeHtml(state.badgeLabel)}</span>
+        </div>
+
+        <div class="touch-card__cta ${state.disabled ? 'touch-card__cta--disabled' : 'touch-card__cta--active'}" style="margin-top: 14px;">
+          <div class="touch-card__cta-label">${escapeHtml(state.ctaLabel)}</div>
+          ${state.helperText ? `<div class="helper" style="margin-top: 8px;">${escapeHtml(state.helperText)}</div>` : ''}
+        </div>
+      </div>
+    `;
+  }
+
+  function buildMyDayDoublesEntryState() {
+    const playerId = getSavedPlayerId();
+    const hasPlayer = !!playerId;
+    const vm = currentDoublesVm || {};
+    const actor = vm.actor && String(vm.actor.id || '') === playerId ? vm.actor : null;
+    const myDayPlayer = currentMyDayVm && currentMyDayVm.player && String(currentMyDayVm.player.id || '') === playerId
+      ? currentMyDayVm.player
+      : null;
+    const status = String(vm.tournamentStatus || '').trim();
+
+    let badgeLabel = 'Listo';
+    let badgeClass = 'status-done';
+
+    if (status === 'awaiting_doubles_confirmation') {
+      badgeLabel = 'Abierto';
+      badgeClass = 'status-live';
+    } else if (status) {
+      badgeLabel = 'Cerrado';
+      badgeClass = 'status-closed';
+    }
+
+    if (!hasPlayer) {
+      return {
+        disabled: true,
+        badgeLabel: badgeLabel,
+        badgeClass: badgeClass,
+        detail: 'Usa el selector de Mi jornada para cargar tu estado personal antes de entrar.',
+        ctaLabel: 'Selecciona tu nombre en Mi jornada',
+        helperText: 'El check-in de dobles hereda automaticamente el jugador que elijas arriba.',
+      };
+    }
+
+    if (doublesIsLoading) {
+      return {
+        disabled: true,
+        badgeLabel: 'Cargando',
+        badgeClass: 'status-pending',
+        detail: `${myDayPlayer && (myDayPlayer.fullName || myDayPlayer.name) || 'Jugador seleccionado'} · Sincronizando estado de dobles...`,
+        ctaLabel: 'Actualizando check-in',
+        helperText: 'Espera un momento antes de entrar para evitar ver informacion anterior.',
+      };
+    }
+
+    return {
+      disabled: false,
+      badgeLabel: badgeLabel,
+      badgeClass: badgeClass,
+      detail: actor
+        ? `${actor.name} · ${buildDoublesActorDetail(actor)}`
+        : `${myDayPlayer && (myDayPlayer.fullName || myDayPlayer.name) || 'Jugador seleccionado'} · Cargando estado de dobles...`,
+      ctaLabel: 'Abrir check-in de dobles',
+      helperText: status === 'awaiting_doubles_confirmation'
+        ? 'La ventana esta activa para confirmar partner, entrar al pool o declinar.'
+        : 'La pantalla conserva el contexto del jugador seleccionado.',
+    };
+  }
+
+  function openDoublesCheckInScreen() {
+    if (!getSavedPlayerId()) return;
+    setActiveAppScreen('doubles');
+  }
+
+  function handleScreenEntryCardKeydown(event, screen) {
+    if (!event) return;
+    const key = String(event.key || '');
+    if (key !== 'Enter' && key !== ' ') return;
+
+    event.preventDefault();
+    if (screen === 'doubles') openDoublesCheckInScreen();
+    if (screen === 'groups') setActiveAppScreen('groups');
+  }
+
+  function renderMyDayTimeline(items) {
+    if (!items || items.length === 0) return '';
+
+    const cardsHtml = items.map(function (item) {
+      const toneClass = getMyDayTimelineToneClass(item.tone);
+
+      return `
+        <div class="card-soft" style="border-left: 4px solid ${toneClass};">
+          <div class="stat-label">${escapeHtml(item.title || '')}</div>
+          <div class="stat-value" style="font-size: 17px; margin-top: 8px;">${escapeHtml(item.primary || '')}</div>
+          ${item.secondary ? `<div class="helper" style="margin-top: 6px;">${escapeHtml(item.secondary)}</div>` : ''}
+        </div>
+      `;
+    }).join('');
+
+    return `
+      <div class="stack">
+        <div class="card-soft">
+          <div class="stat-label">Itinerario</div>
+          <div class="helper" style="margin-top: 6px;">Próximos bloques, checkpoints y fases esperadas.</div>
+        </div>
+        ${cardsHtml}
+      </div>
+    `;
+  }
+
+  function getMyDayTimelineToneClass(tone) {
+    if (tone === 'play') return '#0f766e';
+    if (tone === 'referee') return '#2563eb';
+    if (tone === 'checkpoint') return '#7c3aed';
+    return '#94a3b8';
+  }
+
+  function getMyDayPlayerRoleUi(vm) {
+    const hasCurrentMatch = !!vm.currentMatch;
+    const isReferee = hasCurrentMatch && !!vm.currentMatch.isReferee;
+    const isPlaying = hasCurrentMatch && (!!vm.currentMatch.isPlayerA || !!vm.currentMatch.isPlayerB);
+
+    if (isReferee || isPlaying) {
+      return { show: false, label: '', className: '' };
+    }
+
+    return {
+      show: true,
+      label: 'Sin turno',
+      className: 'status-closed',
+    };
+  }
+
+  function getMyDayMatchRoleUi(vm) {
+    const hasCurrentMatch = !!vm.currentMatch;
+    if (!hasCurrentMatch) {
+      return { show: false, label: '', className: '' };
+    }
+
+    if (vm.currentMatch.isByeAdvance) {
+      return {
+        show: true,
+        label: 'Libre por bye',
+        className: 'status-closed',
+      };
+    }
+
+    const isFinished = isMyDayMatchFinished(vm.currentMatch);
+
+    if (isFinished) {
+      return {
+        show: true,
+        label: 'Finalizado',
+        className: 'status-done',
+      };
+    }
+
+    if (vm.currentMatch.isReferee) {
+      return {
+        show: true,
+        label: 'Eres árbitro en este partido',
+        className: 'status-live',
+      };
+    }
+
+    if (vm.currentMatch.isPlayerA || vm.currentMatch.isPlayerB) {
+      return {
+        show: true,
+        label: 'Juega ahora',
+        className: 'status-live',
+      };
+    }
+
+    return { show: false, label: '', className: '' };
+  }
+
+  function isMyDayMatchFinished(match) {
+    const status = String(match.matchStatus || '').trim();
+    const resultMode = String(match.resultMode || '').trim();
+
+    return (
+      status === 'result_submitted' &&
+      resultMode === 'final'
+    ) || status === 'auto_closed';
+  }
+
+  function buildMyDayCommitmentLabel(vm) {
+    if (!vm.currentBlock) {
+      return {
+        title: 'Sin bloque activo',
+        detail: 'No hay actividad programada en este momento.',
+      };
+    }
+
+    if (vm.currentMatch && vm.currentMatch.isByeAdvance) {
+      return {
+        title: 'Pareja libre en este bloque',
+        detail: `Avance por bye · Bloque ${vm.currentBlock.id} · ${vm.currentBlock.phaseLabel}`,
+      };
+    }
+
+    if (vm.currentMatch && isMyDayMatchFinished(vm.currentMatch)) {
+      return {
+        title: 'Partido finalizado en este bloque',
+        detail: `Bloque ${vm.currentBlock.id} · ${vm.currentBlock.phaseLabel}`,
+      };
+    }
+
+    if (vm.currentMatch && vm.currentMatch.isReferee) {
+      return {
+        title: 'Arbitraje asignado ahora',
+        detail: `Bloque ${vm.currentBlock.id} · ${vm.currentBlock.phaseLabel}`,
+      };
+    }
+
+    if (vm.currentMatch && (vm.currentMatch.isPlayerA || vm.currentMatch.isPlayerB)) {
+      return {
+        title: 'Partido asignado ahora',
+        detail: `Bloque ${vm.currentBlock.id} · ${vm.currentBlock.phaseLabel}`,
+      };
+    }
+
+    return {
+      title: 'Sin compromiso en este bloque',
+      detail: `Bloque ${vm.currentBlock.id} · ${vm.currentBlock.phaseLabel}`,
+    };
+  }
+
+  function formatTournamentStateLabel(currentBlock) {
+    if (!currentBlock) return 'Sin actividad';
+    const status = String(currentBlock.status || '');
+
+    if (status === 'live') return 'En curso';
+    if (status === 'scheduled') return 'Programado';
+    if (status === 'closing') return 'Cierre';
+    if (status === 'transition') return 'Transicion';
+    if (status === 'closed') return 'Cerrado';
+
+    return status || 'Bloque';
+  }
+
+  function getExpectedBlockStatus(currentBlock, internalNowMs) {
+    if (!currentBlock) return '';
+
+    const startMs = parseCanonicalDateTime(currentBlock.startTs);
+    const closeMs = parseCanonicalDateTime(currentBlock.closeSignalTs);
+    const hardMs = parseCanonicalDateTime(currentBlock.hardCloseTs);
+    const endMs = parseCanonicalDateTime(currentBlock.endTs);
+
+    if (!startMs || internalNowMs < startMs) return 'scheduled';
+    if (closeMs && internalNowMs < closeMs) return 'live';
+    if (hardMs && internalNowMs < hardMs) return 'closing';
+    if (endMs && internalNowMs < endMs) return 'transition';
+    if (endMs && internalNowMs >= endMs) return 'closed';
+
+    return String(currentBlock.status || '').trim();
+  }
+
+  function getNextBlockMilestone(currentBlock, internalNowMs) {
+    if (!currentBlock) {
+      return {
+        label: 'Proximo hito',
+        value: 'Sin bloque activo',
+      };
+    }
+
+    const milestones = [
+      { key: 'start', label: 'Inicio', at: parseCanonicalDateTime(currentBlock.startTs) },
+      { key: 'close', label: 'Cierre', at: parseCanonicalDateTime(currentBlock.closeSignalTs) },
+      { key: 'transition', label: 'Transicion', at: parseCanonicalDateTime(currentBlock.hardCloseTs) },
+      { key: 'fin', label: 'Fin de bloque', at: parseCanonicalDateTime(currentBlock.endTs) },
+    ].filter(function (item) {
+      return !!item.at;
+    });
+
+    for (let i = 0; i < milestones.length; i++) {
+      if (internalNowMs < milestones[i].at) {
+        return {
+          label: milestones[i].label,
+          value: formatCountdown(milestones[i].at - internalNowMs),
+        };
+      }
+    }
+
+    return {
+      label: 'Proximo hito',
+      value: 'Esperando refresh del siguiente bloque',
+    };
+  }
+
+  function captureButtonClass(isSecondary) {
+    return isSecondary
+      ? 'capture-action capture-action-secondary'
+      : 'capture-action';
+  }
+
+  function closeMatchCapture() {
+    const el = document.getElementById('capture-modal-overlay');
+    if (el) el.remove();
+  }
+
+  function submitMatchCaptureFinal(setsA, setsB, triggerEl) {
+    submitCapturePayload({
+      mode: 'final',
+      setsA: setsA,
+      setsB: setsB,
+    }, triggerEl);
+  }
+
+  function submitMatchCaptureClosingState(closingState, triggerEl) {
+    submitCapturePayload({
+      mode: 'closing_state',
+      closingState: closingState,
+    }, triggerEl);
+  }
+
+  function submitCapturePayload(payload, triggerEl) {
+    const errorBox = document.getElementById('capture-error');
+    const feedbackBox = document.getElementById('capture-feedback');
+    if (errorBox) {
+      errorBox.style.display = 'none';
+      errorBox.textContent = '';
+    }
+    if (feedbackBox) {
+      feedbackBox.style.display = 'none';
+      feedbackBox.textContent = '';
+    }
+
+    const m = currentMyDayVm.currentMatch;
+    const playerId = currentMyDayVm.player.id;
+    const actorRole = resolveUiActorRole(currentMyDayVm);
+    setCaptureSubmittingState(true, triggerEl, payload);
+
+    google.script.run
+      .withSuccessHandler(function () {
+        closeMatchCapture();
+        loadMyDayFromSelect(true);
+        loadPublicScreen({ silent: true });
+      })
+      .withFailureHandler(function (err) {
+        setCaptureSubmittingState(false);
+        if (!errorBox) return;
+        errorBox.style.display = 'block';
+        errorBox.textContent = err.message || String(err);
+      })
+      .submitMatchResultFromUi({
+        matchId: m.matchId,
+        mode: payload.mode,
+        setsA: payload.setsA,
+        setsB: payload.setsB,
+        closingState: payload.closingState,
+        actorPlayerId: playerId,
+        actorRole: actorRole
+      });
+  }
+
+  function setCaptureSubmittingState(isSubmitting, triggerEl, payload) {
+    const buttons = document.querySelectorAll('#capture-modal-overlay .capture-action');
+    const closeButton = document.querySelector('#capture-modal-overlay .capture-close');
+    const feedbackBox = document.getElementById('capture-feedback');
+
+    buttons.forEach(function (button) {
+      button.disabled = isSubmitting;
+      button.classList.remove('is-pressed');
+    });
+
+    if (closeButton) {
+      closeButton.disabled = isSubmitting;
+    }
+
+    if (isSubmitting && triggerEl) {
+      triggerEl.classList.add('is-pressed');
+    }
+
+    if (!feedbackBox) return;
+
+    if (!isSubmitting) {
+      feedbackBox.style.display = 'none';
+      feedbackBox.textContent = '';
+      return;
+    }
+
+    feedbackBox.style.display = 'block';
+    feedbackBox.textContent = buildCaptureSubmittingLabel(payload);
+  }
+
+  function buildCaptureSubmittingLabel(payload) {
+    if (!payload) return 'Enviando resultado...';
+    if (payload.mode === 'final') {
+      return `Enviando resultado final ${payload.setsA}-${payload.setsB}...`;
+    }
+    return `Enviando estado parcial ${mapClosingStateShortLabel(payload.closingState)}...`;
+  }
+
+  function mapClosingStateShortLabel(closingState) {
+    if (closingState === 'A_1_0') return 'A 1-0';
+    if (closingState === 'B_1_0') return 'B 1-0';
+    if (closingState === 'ONE_ONE') return '1-1';
+    if (closingState === 'NOT_STARTED') return 'no iniciado';
+    return 'parcial';
+  }
+
+  function resolveUiActorRole(vm) {
+    if (!vm || !vm.currentMatch) return 'player';
+    if (vm.currentMatch.isReferee) return 'referee';
+    return 'player';
+  }
+
+  function buildMyDayCta(vm) {
+    if (!vm.currentMatch) {
+      return {
+        label: 'Sin accion disponible en este bloque',
+        disabled: true,
+        helperText: 'No tienes un partido o arbitraje asignado en este bloque.',
+      };
+    }
+
+    if (vm.currentMatch.isByeAdvance) {
+      return {
+        label: 'Libre por bye',
+        disabled: true,
+        helperText: 'Tu pareja no juega este bloque y avanza automaticamente a la siguiente ronda.',
+      };
+    }
+
+    if (isMyDayMatchFinished(vm.currentMatch)) {
+      return {
+        label: 'Partido ya finalizado',
+        disabled: true,
+        helperText: 'La captura queda cerrada porque el partido ya fue registrado.',
+      };
+    }
+
+    const actions = vm.currentMatch.allowedCaptureActions || {};
+
+    if (vm.currentMatch.isReferee && actions.canOpen) {
+      return {
+        label: 'Ingresar resultado',
+        disabled: false,
+        helperText: 'Como arbitro puedes confirmar resultado final o resultado parcial.',
+      };
+    }
+
+    if ((vm.currentMatch.isPlayerA || vm.currentMatch.isPlayerB) && actions.canOpen) {
+      return {
+        label: 'Ingresar resultado',
+        disabled: false,
+        helperText: 'Como jugador puedes ingresar resultado final o un resultado parcial.',
+      };
+    }
+
+    return {
+      label: 'Captura no disponible',
+      disabled: true,
+      helperText: 'La captura se habilita solo cuando el bloque esta en juego o en cierre.',
+    };
+  }
+
+  function openMatchCapture() {
+    if (!currentMyDayVm || !currentMyDayVm.currentMatch) return;
+    if (isMyDayMatchFinished(currentMyDayVm.currentMatch)) return;
+
+    const m = currentMyDayVm.currentMatch;
+    const actions = m.allowedCaptureActions || {};
+    const isReferee = !!m.isReferee;
+
+    if (!actions.canOpen) return;
+
+    const modalTitle = 'Captura de resultado';
+    const actionPanelsHtml = buildRefereeCapturePanel(m, isReferee);
+    const actorWarning = isReferee ? '' : 'Los resultados capturados por jugadores pueden ser reemplazados por el arbitro.';
+
+    const html = `
+      <div id="capture-modal-overlay" style="
+        position: fixed;
+        inset: 0;
+        background: rgba(15,23,42,0.6);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+        padding: 16px;
+      ">
+        <div style="
+          background: white;
+          border-radius: 16px;
+          padding: 20px;
+          position: relative;
+          width: 100%;
+          max-width: 480px;
+          max-height: 90vh;
+          overflow: auto;
+        ">
+          <button class="capture-close" type="button" aria-label="Cerrar captura" onclick="closeMatchCapture()">
+            <span aria-hidden="true">&times;</span>
+          </button>
+
+          <div style="font-weight:bold; font-size:18px; margin-bottom: 6px; padding-right: 44px;">
+            ${escapeHtml(modalTitle)}
+          </div>
+
+          <div class="helper" style="margin-bottom: 12px; padding-right: 44px;">
+            Mesa ${escapeHtml(m.tableNo)} · ${escapeHtml(m.phaseLabel)}
+          </div>
+
+          ${buildCaptureSidesLegend(m)}
+
+          <div class="helper" style="display:none;">
+            Mesa ${escapeHtml(m.tableNo)} · ${escapeHtml(m.phaseLabel)}
+          </div>
+
+          ${actionPanelsHtml}
+
+          ${actorWarning ? `<div class="helper" style="margin-top: 14px;">${escapeHtml(actorWarning)}</div>` : ''}
+
+          <div id="capture-feedback" class="helper" style="display:none; margin-top:12px; color:#0f172a;"></div>
+          <div id="capture-error" class="error" style="display:none; margin-top:12px;"></div>
+        </div>
+      </div>
+    `;
+
+    closeMatchCapture();
+    document.body.insertAdjacentHTML('beforeend', html);
+  }
+
+  function buildCaptureSidesLegend(match) {
+    return `
+      <div class="capture-sides-map capture-sides-map--inline" style="margin-bottom: 14px;">
+        <div class="capture-side-card">
+          <span class="capture-side-badge">A</span>
+          <div class="capture-side-label">${escapeHtml(match.leftLabel || '-')}</div>
+        </div>
+        <div class="capture-side-vs">VS</div>
+        <div class="capture-side-card">
+          <span class="capture-side-badge">B</span>
+          <div class="capture-side-label">${escapeHtml(match.rightLabel || '-')}</div>
+        </div>
+      </div>
+    `;
+  }
+
+  function buildRefereeCapturePanel(match, isReferee) {
+    return `
+      <div class="card-soft" style="margin-bottom: 14px;">
+        <div class="stat-label" style="margin-bottom: 10px;">Resultado final</div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+          <button class="${captureButtonClass()}" onclick="submitMatchCaptureFinal(2,0, this)">A gana 2-0</button>
+          <button class="${captureButtonClass()}" onclick="submitMatchCaptureFinal(2,1, this)">A gana 2-1</button>
+          <button class="${captureButtonClass()}" onclick="submitMatchCaptureFinal(0,2, this)">B gana 0-2</button>
+          <button class="${captureButtonClass()}" onclick="submitMatchCaptureFinal(1,2, this)">B gana 1-2</button>
+        </div>
+      </div>
+
+      <div class="card-soft">
+        <div class="stat-label" style="margin-bottom: 10px;">Resultado parcial (OPCIONAL)</div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+          <button class="${captureButtonClass(true)}" onclick="submitMatchCaptureClosingState('A_1_0', this)">A lidera 1-0</button>
+          <button class="${captureButtonClass(true)}" onclick="submitMatchCaptureClosingState('B_1_0', this)">B lidera 0-1</button>
+          <button class="${captureButtonClass(true)}" onclick="submitMatchCaptureClosingState('ONE_ONE', this)">van 1-1</button>
+          <button class="${captureButtonClass(true)}" onclick="submitMatchCaptureClosingState('NOT_STARTED', this)">No iniciado</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderMyDayError(error) {
+    document.getElementById('myday-content').innerHTML =
+      '<div class="error">' + escapeHtml(error.message || String(error)) + '</div>';
+  }
+
+  function parseCanonicalDateTime(value) {
+    const text = String(value || '').trim();
+    if (!text) return 0;
+
+    const match = text.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/);
+    if (!match) return 0;
+
+    return new Date(
+      Number(match[1]),
+      Number(match[2]) - 1,
+      Number(match[3]),
+      Number(match[4]),
+      Number(match[5]),
+      Number(match[6])
+    ).getTime();
+  }
+
+  function formatElapsedClock(milliseconds) {
+    const safe = Math.max(0, Number(milliseconds) || 0);
+    const totalSeconds = Math.floor(safe / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+
+    return [
+      String(hours).padStart(2, '0'),
+      String(minutes).padStart(2, '0'),
+      String(seconds).padStart(2, '0'),
+    ].join(':');
+  }
+
+  function formatCountdown(milliseconds) {
+    return formatElapsedClock(milliseconds);
+  }
+
+  function formatRelativeSeconds(milliseconds) {
+    const seconds = Math.max(0, Math.floor((Number(milliseconds) || 0) / 1000));
+    return seconds + ' s';
+  }
+
+  function formatClockTime(milliseconds) {
+    if (!milliseconds) return '--:--:--';
+
+    const date = new Date(milliseconds);
+    return [
+      String(date.getHours()).padStart(2, '0'),
+      String(date.getMinutes()).padStart(2, '0'),
+      String(date.getSeconds()).padStart(2, '0'),
+    ].join(':');
+  }
+
+  function formatClockStamp(milliseconds) {
+    if (!milliseconds) return '--';
+
+    const date = new Date(milliseconds);
+    const yyyy = String(date.getFullYear());
+    const mm = String(date.getMonth() + 1).padStart(2, '0');
+    const dd = String(date.getDate()).padStart(2, '0');
+
+    return `${yyyy}-${mm}-${dd} ${formatClockTime(milliseconds)}`;
+  }
+
+  function savePlayerId(playerId) {
+    try {
+      localStorage.setItem(LOCAL_STORAGE_PLAYER_KEY, String(playerId || ''));
+    } catch (e) {
+      console.warn('No se pudo guardar player_id en localStorage', e);
+    }
+  }
+
+  function getSavedPlayerId() {
+    try {
+      return localStorage.getItem(LOCAL_STORAGE_PLAYER_KEY) || '';
+    } catch (e) {
+      return '';
+    }
+  }
+
+  function saveGroupsPlayerId(playerId) {
+    try {
+      localStorage.setItem(LOCAL_STORAGE_GROUPS_PLAYER_KEY, String(playerId || ''));
+    } catch (e) {
+      console.warn('No se pudo guardar player_id de grupos en localStorage', e);
+    }
+  }
+
+  function getSavedGroupsPlayerId() {
+    try {
+      return localStorage.getItem(LOCAL_STORAGE_GROUPS_PLAYER_KEY) || '';
+    } catch (e) {
+      return '';
+    }
+  }
+
+  function escapeHtml(value) {
+    return String(value == null ? '' : value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+</script>
