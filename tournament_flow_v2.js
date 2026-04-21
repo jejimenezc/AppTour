@@ -4,6 +4,7 @@
  * - grupos después
  */
 function initializeTournamentFlowV2() {
+  resetTournamentInternalClock();
   resetTournamentFlowV2();
   openDoublesConfirmationWindow();
   setConfigValue('tournament_status', 'awaiting_doubles_confirmation', 'Ventana de dobles abierta');

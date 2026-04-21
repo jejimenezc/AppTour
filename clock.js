@@ -8,42 +8,41 @@ function tickTournamentClock() {
     return;
   }
 
-  const nowText = nowIso();
+  const clockState = getTournamentClockState_();
+  const nowText = String(clockState.internalNowTs || '').trim();
+  if (!nowText) {
+    Logger.log(`Clock tick omitido: reloj interno invalido (${clockState.health || 'unknown'}).`);
+    return;
+  }
+
   const startTs = normalizeDateTimeText(currentBlock.start_ts);
   const closeSignalTs = normalizeDateTimeText(currentBlock.close_signal_ts);
   const hardCloseTs = normalizeDateTimeText(currentBlock.hard_close_ts);
   const endTs = normalizeDateTimeText(currentBlock.end_ts);
 
   let status = String(currentBlock.status || '').trim();
-  const transitions = [];
 
   if (status === 'scheduled' && startTs && nowText >= startTs) {
     startCurrentBlock(currentBlock.block_id);
-    status = 'live';
-    transitions.push('live');
+    Logger.log(`Bloque ${currentBlock.block_id} => live`);
+    return;
   }
 
   if (status === 'live' && closeSignalTs && nowText >= closeSignalTs) {
     enterClosingState(currentBlock.block_id);
-    status = 'closing';
-    transitions.push('closing');
+    Logger.log(`Bloque ${currentBlock.block_id} => closing`);
+    return;
   }
 
   if ((status === 'live' || status === 'closing') && hardCloseTs && nowText >= hardCloseTs) {
     enterTransitionState(currentBlock.block_id);
-    status = 'transition';
-    transitions.push('transition');
+    Logger.log(`Bloque ${currentBlock.block_id} => transition`);
+    return;
   }
 
   if (status === 'transition' && endTs && nowText >= endTs) {
     finishCurrentBlockAndMoveNext(currentBlock.block_id);
-    transitions.push('closed');
-    Logger.log(`Bloque ${currentBlock.block_id} => ${transitions.join(' -> ')}`);
-    return;
-  }
-
-  if (transitions.length) {
-    Logger.log(`Bloque ${currentBlock.block_id} => ${transitions.join(' -> ')}`);
+    Logger.log(`Bloque ${currentBlock.block_id} => closed`);
     return;
   }
 
@@ -59,8 +58,38 @@ const CLOCK_TRIGGER_DEFAULT_MINUTES = 1;
  * Aplica lock para evitar solapamientos y solo corre si el trigger esta habilitado.
  */
 function runTournamentClockTick() {
-  if (!toBoolean(getConfigValue('clock_trigger_enabled'))) {
+  runTournamentClockTickWithOptions_({
+    requireEnabled: true,
+    auditNote: 'Ultima ejecucion automatica del reloj',
+  });
+}
+
+/**
+ * Ejecuta el tick manual compartiendo lock y auditoria con el trigger automatico.
+ */
+function runTournamentClockManualTick() {
+  runTournamentClockTickWithOptions_({
+    requireEnabled: false,
+    auditNote: 'Ultima ejecucion manual del reloj',
+  });
+}
+
+/**
+ * Nucleo compartido de ejecucion del reloj.
+ *
+ * @param {{requireEnabled:boolean, auditNote:string}} options
+ */
+function runTournamentClockTickWithOptions_(options) {
+  const opts = options || {};
+  const clockState = getTournamentClockState_();
+
+  if (opts.requireEnabled && !toBoolean(getConfigValue('clock_trigger_enabled'))) {
     Logger.log('Clock trigger omitido: clock_trigger_enabled=false');
+    return;
+  }
+
+  if (clockState.health === 'missing_start_ts') {
+    Logger.log('Clock trigger omitido: falta tournament_start_ts.');
     return;
   }
 
@@ -72,7 +101,7 @@ function runTournamentClockTick() {
 
   try {
     tickTournamentClock();
-    setConfigValue('clock_trigger_last_run_at', nowIso(), 'Ultima ejecucion automatica del reloj');
+    setConfigValue('clock_trigger_last_run_at', nowIso(), opts.auditNote || 'Ultima ejecucion del reloj');
     setConfigValue('clock_trigger_last_error', '', 'Ultimo error del reloj');
   } catch (error) {
     const message = error && error.message ? error.message : String(error);
@@ -81,6 +110,173 @@ function runTournamentClockTick() {
   } finally {
     lock.releaseLock();
   }
+}
+
+/**
+ * Devuelve el "ahora" interno del torneo ya saneado.
+ *
+ * @returns {string}
+ */
+function getTournamentClockNowText() {
+  return String(getTournamentClockState_().internalNowTs || '').trim();
+}
+
+/**
+ * Devuelve el estado del reloj interno autocorregido contra tournament_start_ts.
+ * `tournament_start_ts` es la fuente de verdad; las anclas son cache operacional.
+ *
+ * @returns {{
+ *   startTs:string,
+ *   realNowTs:string,
+ *   internalAnchorTs:string,
+ *   realAnchorTs:string,
+ *   internalNowTs:string,
+ *   elapsedMs:number,
+ *   isRunning:boolean,
+ *   health:string,
+ *   healthMessage:string
+ * }}
+ */
+function getTournamentClockState_() {
+  const startTs = normalizeDateTimeText(getConfigValue('tournament_start_ts'));
+  const realNowTs = normalizeDateTimeText(nowIso());
+  const isRunning = toBoolean(getConfigValue('clock_trigger_enabled'));
+
+  if (!startTs) {
+    return {
+      startTs: '',
+      realNowTs,
+      internalAnchorTs: '',
+      realAnchorTs: '',
+      internalNowTs: '',
+      elapsedMs: 0,
+      isRunning: false,
+      health: 'missing_start_ts',
+      healthMessage: 'Falta tournament_start_ts.',
+    };
+  }
+
+  const startDate = parseBlockDate(startTs);
+  const realNowDate = parseBlockDate(realNowTs);
+  if (!startDate || !realNowDate) {
+    return {
+      startTs,
+      realNowTs,
+      internalAnchorTs: startTs,
+      realAnchorTs: realNowTs,
+      internalNowTs: startTs,
+      elapsedMs: 0,
+      isRunning: false,
+      health: 'invalid_anchor',
+      healthMessage: 'No se pudo interpretar la base temporal del torneo.',
+    };
+  }
+
+  let internalAnchorTs = normalizeDateTimeText(getConfigValue('clock_internal_anchor_ts'));
+  let realAnchorTs = normalizeDateTimeText(getConfigValue('clock_real_anchor_ts'));
+  let health = 'ok';
+  let healthMessage = '';
+  let needsPersist = false;
+
+  if (!internalAnchorTs) {
+    internalAnchorTs = startTs;
+    health = 'autocorrected';
+    healthMessage = 'Se recreo clock_internal_anchor_ts desde tournament_start_ts.';
+    needsPersist = true;
+  }
+
+  if (!realAnchorTs) {
+    realAnchorTs = isRunning ? realNowTs : startTs;
+    health = 'autocorrected';
+    healthMessage = 'Se recreo clock_real_anchor_ts.';
+    needsPersist = true;
+  }
+
+  let internalAnchorDate = parseBlockDate(internalAnchorTs);
+  let realAnchorDate = parseBlockDate(realAnchorTs);
+
+  if (!internalAnchorDate) {
+    internalAnchorTs = startTs;
+    internalAnchorDate = startDate;
+    health = 'autocorrected';
+    healthMessage = 'clock_internal_anchor_ts era invalido; se reseteo al inicio del torneo.';
+    needsPersist = true;
+  }
+
+  if (!realAnchorDate) {
+    realAnchorTs = realNowTs;
+    realAnchorDate = realNowDate;
+    health = 'autocorrected';
+    healthMessage = 'clock_real_anchor_ts era invalido; se reseteo a la hora real actual.';
+    needsPersist = true;
+  }
+
+  if (internalAnchorDate.getTime() < startDate.getTime()) {
+    internalAnchorTs = startTs;
+    internalAnchorDate = startDate;
+    health = 'autocorrected';
+    healthMessage = 'El reloj interno quedo antes de tournament_start_ts; se realineo al inicio del torneo.';
+    needsPersist = true;
+  }
+
+  let elapsedMs = Math.max(0, internalAnchorDate.getTime() - startDate.getTime());
+  if (isRunning) {
+    elapsedMs += Math.max(0, realNowDate.getTime() - realAnchorDate.getTime());
+  }
+
+  const internalNowTs = formatParsedBlockDate(new Date(startDate.getTime() + elapsedMs));
+
+  if (needsPersist) {
+    setConfigValue('clock_internal_anchor_ts', internalAnchorTs, 'Ancla interna del reloj del torneo');
+    setConfigValue('clock_real_anchor_ts', realAnchorTs, 'Ancla real del reloj del torneo');
+  }
+
+  return {
+    startTs,
+    realNowTs,
+    internalAnchorTs,
+    realAnchorTs,
+    internalNowTs,
+    elapsedMs,
+    isRunning,
+    health,
+    healthMessage,
+  };
+}
+
+/**
+ * Reinicia el reloj interno y lo vuelve a alinear con tournament_start_ts.
+ *
+ * @param {string=} startTs
+ */
+function resetTournamentInternalClock(startTs) {
+  const normalizedStart = normalizeDateTimeText(startTs || getConfigValue('tournament_start_ts'));
+  if (!normalizedStart) return;
+
+  setConfigValue('clock_internal_anchor_ts', normalizedStart, 'Ancla interna del reloj del torneo');
+  setConfigValue('clock_real_anchor_ts', nowIso(), 'Ancla real del reloj del torneo');
+}
+
+/**
+ * Congela el reloj interno en su valor actual.
+ */
+function pauseTournamentInternalClock() {
+  const state = getTournamentClockState_();
+  if (!state.startTs) return;
+
+  setConfigValue('clock_internal_anchor_ts', state.internalNowTs, 'Ancla interna del reloj del torneo');
+  setConfigValue('clock_real_anchor_ts', nowIso(), 'Ancla real del reloj del torneo');
+}
+
+/**
+ * Reanuda el reloj interno desde su valor congelado actual.
+ */
+function resumeTournamentInternalClock() {
+  const state = getTournamentClockState_();
+  if (!state.startTs) return;
+
+  setConfigValue('clock_internal_anchor_ts', state.internalNowTs, 'Ancla interna del reloj del torneo');
+  setConfigValue('clock_real_anchor_ts', nowIso(), 'Ancla real del reloj del torneo');
 }
 
 /**
@@ -259,6 +455,8 @@ function finishCurrentBlockAndMoveNext(blockId) {
   let next = activateNextBlock();
 
   if (next) {
+    maybeStartActivatedBlock_(next);
+
     if (String(next.phase_type) === 'doubles') {
       setConfigValue('tournament_status', 'running_doubles', 'Dobles en curso');
     } else if (String(next.phase_type) === 'groups') {
@@ -368,6 +566,24 @@ function finishCurrentBlockAndMoveNext(blockId) {
 }
 
 /**
+ * Si el bloque activado ya debio partir, lo arranca inmediatamente.
+ * Esto evita dejarlo en scheduled hasta el proximo tick.
+ *
+ * @param {Object} block
+ */
+function maybeStartActivatedBlock_(block) {
+  if (!block) return;
+
+  const status = String(block.status || '').trim();
+  const startTs = normalizeDateTimeText(block.start_ts);
+  const nowText = String(getTournamentClockState_().internalNowTs || '').trim();
+
+  if (status === 'scheduled' && startTs && nowText >= startTs) {
+    startCurrentBlock(block.block_id);
+  }
+}
+
+/**
  * Sincroniza roles de jugadores para un bloque activo.
  * @param {string|number} blockId
  */
@@ -436,7 +652,7 @@ function debugTickConditionsFull() {
   const currentBlock = getCurrentBlock();
   if (!currentBlock) throw new Error('No hay bloque actual.');
 
-  const nowText = nowIso();
+  const nowText = getTournamentClockNowText();
   const startTs = normalizeDateTimeText(currentBlock.start_ts);
   const closeSignalTs = normalizeDateTimeText(currentBlock.close_signal_ts);
   const hardCloseTs = normalizeDateTimeText(currentBlock.hard_close_ts);

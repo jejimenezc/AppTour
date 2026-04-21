@@ -298,6 +298,39 @@
     animation: doubles-spin 0.9s linear infinite;
   }
 
+  .myday-clock-card {
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(241,245,249,0.96) 100%),
+      radial-gradient(circle at top right, rgba(14, 165, 233, 0.10), transparent 36%);
+  }
+
+  .myday-clock-value {
+    font-size: 32px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    line-height: 1;
+    margin-top: 8px;
+  }
+
+  .myday-clock-meta {
+    margin-top: 8px;
+    max-width: 56ch;
+  }
+
+  .myday-clock-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 14px;
+  }
+
+  .myday-clock-metric {
+    padding: 14px;
+    border: 1px solid #dbe4ee;
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.72);
+  }
+
   @keyframes doubles-spin {
     from {
       transform: rotate(0deg);
@@ -985,6 +1018,14 @@
 
     .doubles-screen-stack {
       gap: 14px;
+    }
+
+    .myday-clock-value {
+      font-size: 28px;
+    }
+
+    .myday-clock-grid {
+      grid-template-columns: 1fr;
     }
 
     .doubles-stat {

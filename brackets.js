@@ -109,7 +109,7 @@ function buildInitialBracketMatchups(bracketType, players) {
   }));
 
   const round1 = [];
-  const roundLabel = size === 8 ? 'QF' : 'R16';
+  const roundLabel = getRoundLabelByPlayerCount(size);
 
   for (let i = 0; i < positionedPlayers.length; i += 2) {
     const left = positionedPlayers[i];

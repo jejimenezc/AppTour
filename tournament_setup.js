@@ -11,7 +11,7 @@
  * 7. deja current_block_id en 1
  */
 function setupGroupStage() {
-  const players = getCheckedInPlayers();
+  const players = getTournamentPlayers();
 
   validatePlayerCountForGroups(players);
 
@@ -33,17 +33,23 @@ function setupGroupStage() {
  */
 function validatePlayerCountForGroups(players) {
   const n = players.length;
+  const supportedCounts = {
+    12: true,
+    18: true,
+    24: true,
+    36: true,
+  };
 
   if (n === 0) {
-    throw new Error('No hay jugadores con checked_in = TRUE');
+    throw new Error('No hay jugadores activos para el torneo.');
   }
 
   if (n % 3 !== 0) {
     throw new Error(`La cantidad de jugadores (${n}) no es múltiplo de 3.`);
   }
 
-  if (n !== 24 && n !== 36) {
-    throw new Error(`Este MVP espera 24 o 36 jugadores. Recibidos: ${n}`);
+  if (!supportedCounts[n]) {
+    throw new Error(`Este MVP soporta 12, 18, 24 o 36 jugadores. Recibidos: ${n}`);
   }
 }
 
@@ -86,8 +92,7 @@ function clearTournamentStageData() {
  * @param {Object[]} checkedInPlayers
  */
 function assignPlayersToGroups(checkedInPlayers) {
-  const players = getPlayersSortedBySeed()
-    .filter(player => toBoolean(player.checked_in));
+  const players = (checkedInPlayers || []).slice();
 
   const numGroups = players.length / 3;
   const groupIds = generateGroupIds(numGroups);
@@ -461,14 +466,7 @@ function addMinutesToDateTimeText(dateTimeText, minutes) {
   }
 
   const shifted = new Date(parsed.getTime() + Number(minutes || 0) * 60 * 1000);
-  const year = shifted.getUTCFullYear();
-  const month = String(shifted.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(shifted.getUTCDate()).padStart(2, '0');
-  const hour = String(shifted.getUTCHours()).padStart(2, '0');
-  const minute = String(shifted.getUTCMinutes()).padStart(2, '0');
-  const second = String(shifted.getUTCSeconds()).padStart(2, '0');
-
-  return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
+  return formatParsedBlockDate(shifted);
 }
 
 /**
