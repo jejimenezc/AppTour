@@ -122,6 +122,13 @@ function getMyDayViewModel(playerId) {
   };
 }
 
+function getMyDayViewModelFromUi(playerId) {
+  const vm = getMyDayViewModel(playerId);
+  publishMyDayViewModelToFirebase(playerId);
+  publishDoublesViewModelToFirebase(playerId);
+  return vm;
+}
+
 function getAllowedCaptureActions(match, playerId) {
   const block = getCurrentBlock();
   const blockStatus = String(block && block.status || '').trim();
@@ -209,12 +216,12 @@ function applySinglesGroupsActionFromUi(payload) {
 
   if (action === 'open_window') {
     openSinglesGroupConfirmationWindow();
-    return getSinglesGroupsViewModel(selectedPlayerId);
+    return publishRealtimeSnapshotAfterMutation_(getSinglesGroupsViewModel(selectedPlayerId));
   }
 
   if (action === 'recalculate') {
     recalculateProposedSinglesGroups();
-    return getSinglesGroupsViewModel(selectedPlayerId);
+    return publishRealtimeSnapshotAfterMutation_(getSinglesGroupsViewModel(selectedPlayerId));
   }
 
   if (action === 'move_player') {
@@ -222,12 +229,12 @@ function applySinglesGroupsActionFromUi(payload) {
       throw new Error('Debes elegir jugador y destino.');
     }
     movePlayerToProposedGroup(playerId, targetGroupId, targetSlot);
-    return getSinglesGroupsViewModel(selectedPlayerId || playerId);
+    return publishRealtimeSnapshotAfterMutation_(getSinglesGroupsViewModel(selectedPlayerId || playerId));
   }
 
   if (action === 'confirm_groups') {
     confirmSinglesGroupsAndStartGroupStage();
-    return getSinglesGroupsViewModel(selectedPlayerId);
+    return publishRealtimeSnapshotAfterMutation_(getSinglesGroupsViewModel(selectedPlayerId));
   }
 
   throw new Error(`Accion de grupos no soportada: ${action}`);
@@ -267,6 +274,14 @@ function getDoublesConfigViewModel(selectedPlayerId) {
   };
 }
 
+function getDoublesConfigViewModelFromUi(selectedPlayerId) {
+  const vm = getDoublesConfigViewModel(selectedPlayerId);
+  if (String(selectedPlayerId || '').trim()) {
+    publishDoublesViewModelToFirebase(selectedPlayerId);
+  }
+  return vm;
+}
+
 function applyDoublesConfigActionFromUi(payload) {
   const data = payload || {};
   const action = String(data.action || '').trim();
@@ -280,7 +295,7 @@ function applyDoublesConfigActionFromUi(payload) {
       throw new Error('Debes elegir jugador y partner.');
     }
     proposePartner(playerId, targetPlayerId);
-    return getDoublesConfigViewModel(playerId);
+    return publishRealtimeSnapshotAfterMutation_(getDoublesConfigViewModel(playerId), [playerId, targetPlayerId]);
   }
 
   if (!playerId) {
@@ -289,27 +304,31 @@ function applyDoublesConfigActionFromUi(payload) {
 
   if (action === 'opt_into_pool') {
     optIntoPool(playerId);
-    return getDoublesConfigViewModel(playerId);
+    return publishRealtimeSnapshotAfterMutation_(getDoublesConfigViewModel(playerId), [playerId]);
   }
 
   if (action === 'decline_doubles') {
     declineDoubles(playerId);
-    return getDoublesConfigViewModel(playerId);
+    return publishRealtimeSnapshotAfterMutation_(getDoublesConfigViewModel(playerId), [playerId]);
   }
 
   if (action === 'confirm_partner') {
+    const actor = getPlayerById(playerId);
+    const partnerId = String(actor && actor.doubles_request_from || actor && actor.doubles_partner_id || '').trim();
     confirmPartner(playerId);
-    return getDoublesConfigViewModel(playerId);
+    return publishRealtimeSnapshotAfterMutation_(getDoublesConfigViewModel(playerId), [playerId, partnerId]);
   }
 
   if (action === 'reject_partner') {
+    const actor = getPlayerById(playerId);
+    const partnerId = String(actor && actor.doubles_request_from || actor && actor.doubles_request_to || '').trim();
     rejectPartner(playerId);
-    return getDoublesConfigViewModel(playerId);
+    return publishRealtimeSnapshotAfterMutation_(getDoublesConfigViewModel(playerId), [playerId, partnerId]);
   }
 
   if (action === 'back_to_eligible') {
     clearPlayerDoublesConfig(playerId, 'eligible');
-    return getDoublesConfigViewModel(playerId);
+    return publishRealtimeSnapshotAfterMutation_(getDoublesConfigViewModel(playerId), [playerId]);
   }
 
   throw new Error(`Accion de dobles no soportada: ${action}`);
@@ -718,24 +737,24 @@ function setTournamentStartTsFromUi(rawValue) {
   const normalized = normalizeTournamentStartInput_(rawValue);
   setConfigValue('tournament_start_ts', normalized, 'Hora base del torneo');
   resetTournamentInternalClock(normalized);
-  return getAdminControlViewModel();
+  return publishRealtimeSnapshotAfterMutation_(getAdminControlViewModel());
 }
 
 function setTournamentStartNowFromUi() {
   const value = nowIso();
   setConfigValue('tournament_start_ts', value, 'Hora base del torneo');
   resetTournamentInternalClock(value);
-  return getAdminControlViewModel();
+  return publishRealtimeSnapshotAfterMutation_(getAdminControlViewModel());
 }
 
 function initializeTournamentFlowV2FromUi() {
   initializeTournamentFlowV2();
-  return getAdminControlViewModel();
+  return publishRealtimeSnapshotAfterMutation_(getAdminControlViewModel());
 }
 
 function seedDemoDoublesConfigFromUi() {
   seedDemoDoublesConfiguration_();
-  return getAdminControlViewModel();
+  return publishRealtimeSnapshotAfterMutation_(getAdminControlViewModel());
 }
 
 function setupDoublesStageFromUi() {
@@ -749,7 +768,7 @@ function setupDoublesStageFromUi() {
   vm.lastActionMessage = blockId
     ? `Bloque inicial de dobles generado: ${blockId}`
     : 'No se genero un bloque de dobles.';
-  return vm;
+  return publishRealtimeSnapshotAfterMutation_(vm);
 }
 
 function runTournamentClockNowFromUi() {
@@ -782,14 +801,14 @@ function setClockTriggerEnabledFromUi(enabled) {
 
   const vm = getAdminControlViewModel();
   vm.lastActionMessage = nextValue ? 'Reloj automatico reanudado.' : 'Reloj automatico pausado.';
-  return vm;
+  return publishRealtimeSnapshotAfterMutation_(vm);
 }
 
 function confirmSinglesGroupsFromUi() {
   confirmSinglesGroupsAndStartGroupStage();
   const vm = getAdminControlViewModel();
   vm.lastActionMessage = 'Grupos confirmados. Fase de grupos iniciada.';
-  return vm;
+  return publishRealtimeSnapshotAfterMutation_(vm);
 }
 
 function scheduleDoublesFinalFromUi() {
@@ -800,7 +819,7 @@ function scheduleDoublesFinalFromUi() {
 
   const vm = getAdminControlViewModel();
   vm.lastActionMessage = `Final de dobles programada en bloque ${blockId}.`;
-  return vm;
+  return publishRealtimeSnapshotAfterMutation_(vm);
 }
 
 function startDemoTournamentNowFromUi() {
@@ -822,7 +841,15 @@ function startDemoTournamentNowFromUi() {
   vm.lastActionMessage = blockId
     ? `Simulacion iniciada. Bloque de dobles ${blockId} listo y reloj ejecutado.`
     : 'Simulacion iniciada sin bloque de dobles.';
-  return vm;
+  return publishRealtimeSnapshotAfterMutation_(vm);
+}
+
+function publishRealtimeSnapshotAfterMutation_(result, playerIds) {
+  publishRealtimeSnapshotToFirebase();
+  if (playerIds && playerIds.length) {
+    publishPlayerRealtimeViewsToFirebase(playerIds);
+  }
+  return result;
 }
 
 function normalizeTournamentStartInput_(rawValue) {
@@ -879,6 +906,13 @@ function submitMatchResultFromUi(payload) {
   const actorPlayerId = String(data.actorPlayerId || '').trim();
   const actorRole = String(data.actorRole || '').trim();
   const match = getMatchById(matchId);
+  const impactedPlayerIds = match
+    ? [
+        match.player_a_id,
+        match.player_b_id,
+        match.referee_player_id,
+      ]
+    : [];
 
   if (!matchId) {
     throw new Error('matchId requerido');
@@ -914,7 +948,7 @@ function submitMatchResultFromUi(payload) {
       submitted_by_role: actorRole || 'player',
     });
 
-    return { ok: true };
+    return publishRealtimeSnapshotAfterMutation_({ ok: true }, impactedPlayerIds);
   }
 
   if (mode === 'closing_state') {
@@ -927,7 +961,7 @@ function submitMatchResultFromUi(payload) {
       submitted_by_role: actorRole || 'player',
     });
 
-    return { ok: true };
+    return publishRealtimeSnapshotAfterMutation_({ ok: true }, impactedPlayerIds);
   }
 
   throw new Error(`mode no soportado: ${mode}`);

@@ -38,7 +38,11 @@
   let doublesLoadingDetail = '';
   let db = null;
   let realtimeMatchesRef = null;
+  let realtimeMyDayRef = null;
+  let realtimeDoublesRef = null;
   let realtimeListenerAttached = false;
+  let realtimeMyDayPlayerId = '';
+  let realtimeDoublesPlayerId = '';
   let lastRealtimePayload = null;
   let lastRealtimeMatches = [];
 
@@ -46,7 +50,6 @@
     initializeAppScreens();
     initializeFirebaseRealtime();
     loadPublicScreen();
-    startMyDayAutoRefresh();
     startClientClockTicker();
     loadPlayerSelector();
     loadSinglesGroupsConfig();
@@ -214,6 +217,7 @@
     if (typeof firebase === 'undefined' || !firebase || typeof firebase.initializeApp !== 'function') {
       console.warn('Firebase compat no esta disponible en el cliente.');
       startPublicAutoRefresh();
+      startMyDayAutoRefresh();
       return;
     }
 
@@ -227,6 +231,7 @@
     } catch (error) {
       console.error('No fue posible inicializar Firebase Realtime Database.', error);
       startPublicAutoRefresh();
+      startMyDayAutoRefresh();
     }
   }
 
@@ -247,6 +252,75 @@
     });
 
     realtimeListenerAttached = true;
+  }
+
+  function subscribeRealtimeViewModels(playerId) {
+    const normalizedPlayerId = String(playerId || '').trim();
+
+    if (!db || !normalizedPlayerId) {
+      unsubscribeRealtimeViewModels();
+      return;
+    }
+
+    subscribeRealtimeMyDay(normalizedPlayerId);
+    subscribeRealtimeDoubles(normalizedPlayerId);
+  }
+
+  function unsubscribeRealtimeViewModels() {
+    unsubscribeRealtimeMyDay();
+    unsubscribeRealtimeDoubles();
+  }
+
+  function subscribeRealtimeMyDay(playerId) {
+    const normalizedPlayerId = String(playerId || '').trim();
+    if (!db || !normalizedPlayerId) return;
+    if (realtimeMyDayRef && realtimeMyDayPlayerId === normalizedPlayerId) return;
+
+    unsubscribeRealtimeMyDay();
+    realtimeMyDayPlayerId = normalizedPlayerId;
+    realtimeMyDayRef = db.ref(`players/${normalizedPlayerId}/myDay`);
+    realtimeMyDayRef.on('value', function (snapshot) {
+      const vm = snapshot ? snapshot.val() : null;
+      if (!vm) return;
+      myDayLastSuccessAt = new Date();
+      myDayLastErrorMessage = '';
+      renderMyDay(vm);
+    }, function (error) {
+      console.error('Error al escuchar myDay en Firebase.', error);
+    });
+  }
+
+  function unsubscribeRealtimeMyDay() {
+    if (realtimeMyDayRef) {
+      realtimeMyDayRef.off('value');
+      realtimeMyDayRef = null;
+    }
+    realtimeMyDayPlayerId = '';
+  }
+
+  function subscribeRealtimeDoubles(playerId) {
+    const normalizedPlayerId = String(playerId || '').trim();
+    if (!db || !normalizedPlayerId) return;
+    if (realtimeDoublesRef && realtimeDoublesPlayerId === normalizedPlayerId) return;
+
+    unsubscribeRealtimeDoubles();
+    realtimeDoublesPlayerId = normalizedPlayerId;
+    realtimeDoublesRef = db.ref(`doubles/viewModels/${normalizedPlayerId}`);
+    realtimeDoublesRef.on('value', function (snapshot) {
+      const vm = snapshot ? snapshot.val() : null;
+      if (!vm) return;
+      renderDoublesConfig(vm);
+    }, function (error) {
+      console.error('Error al escuchar dobles en Firebase.', error);
+    });
+  }
+
+  function unsubscribeRealtimeDoubles() {
+    if (realtimeDoublesRef) {
+      realtimeDoublesRef.off('value');
+      realtimeDoublesRef = null;
+    }
+    realtimeDoublesPlayerId = '';
   }
 
   function normalizeRealtimeMatchesPayload(payload) {
@@ -526,7 +600,13 @@
     const opts = options || {};
     const silent = !!opts.silent;
     const root = document.getElementById('doubles-config-content');
+    const playerId = getSavedPlayerId();
     if (!root) return;
+
+    if (db && playerId) {
+      subscribeRealtimeDoubles(playerId);
+    }
+
     const requestId = ++doublesLoadRequestSeq;
     doublesLoadRequestActive = requestId;
 
@@ -557,7 +637,7 @@
         doublesIsLoading = false;
         renderDoublesConfigError(error);
       })
-      .getDoublesConfigViewModel(getSavedPlayerId());
+      .getDoublesConfigViewModelFromUi(getSavedPlayerId());
   }
 
   function buildDoublesLoadingHtml(options) {
@@ -1495,26 +1575,44 @@
 
     if (!playerId) {
       savePlayerId('');
+      unsubscribeRealtimeViewModels();
       currentMyDayVm = null;
+      currentDoublesVm = null;
       myDayClockSnapshot = null;
       const root = document.getElementById('myday-content');
       if (root) {
         root.innerHTML = '<div class="empty">Selecciona para ver tu jornada.</div>';
       }
-      loadDoublesConfig({ silent: true });
+      const doublesRoot = document.getElementById('doubles-config-content');
+      if (doublesRoot) {
+        doublesRoot.innerHTML = '<div class="empty">Selecciona tu nombre en Mi jornada para gestionar tu estado de dobles.</div>';
+      }
+      renderMyDayDoublesEntryCard();
       return;
     }
 
     savePlayerId(playerId);
+    subscribeRealtimeViewModels(playerId);
     loadDoublesConfig({ silent: true });
-    loadMyDayForPlayer(playerId, { silent: !!isAutoLoad });
+    loadMyDayForPlayer(playerId, {
+      silent: !!isAutoLoad,
+      forceServer: !db || !currentMyDayVm || String(currentMyDayVm.player && currentMyDayVm.player.id || '') !== playerId,
+    });
   }
 
   function loadMyDayForPlayer(playerId, options) {
     const opts = options || {};
     const silent = !!opts.silent;
+    const forceServer = !!opts.forceServer;
     const root = document.getElementById('myday-content');
     if (!root || !playerId || myDayLoadInFlight) return;
+
+    if (db) {
+      subscribeRealtimeMyDay(playerId);
+      if (!forceServer) {
+        return;
+      }
+    }
 
     myDayLoadInFlight = true;
 
@@ -1539,7 +1637,7 @@
           updateMyDayClockHud();
         }
       })
-      .getMyDayViewModel(playerId);
+      .getMyDayViewModelFromUi(playerId);
   }
 
   function refreshCurrentPlayerExperience(options) {
@@ -1557,13 +1655,17 @@
     google.script.run
       .withSuccessHandler(function () {
         myDayHeartbeatInFlight = false;
-        loadMyDayForPlayer(playerId, { silent: opts.silent !== false });
-        loadDoublesConfig({ silent: opts.silent !== false });
+        if (!db) {
+          loadMyDayForPlayer(playerId, { silent: opts.silent !== false, forceServer: true });
+          loadDoublesConfig({ silent: opts.silent !== false });
+        }
       })
       .withFailureHandler(function () {
         myDayHeartbeatInFlight = false;
-        loadMyDayForPlayer(playerId, { silent: opts.silent !== false });
-        loadDoublesConfig({ silent: opts.silent !== false });
+        if (!db) {
+          loadMyDayForPlayer(playerId, { silent: opts.silent !== false, forceServer: true });
+          loadDoublesConfig({ silent: opts.silent !== false });
+        }
       })
       .syncTournamentClockHeartbeatFromUi();
   }

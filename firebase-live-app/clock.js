@@ -103,6 +103,7 @@ function runTournamentClockTickWithOptions_(options) {
     tickTournamentClock();
     setConfigValue('clock_trigger_last_run_at', nowIso(), opts.auditNote || 'Ultima ejecucion del reloj');
     setConfigValue('clock_trigger_last_error', '', 'Ultimo error del reloj');
+    publishRealtimeSnapshotToFirebase();
   } catch (error) {
     const message = error && error.message ? error.message : String(error);
     setConfigValue('clock_trigger_last_error', message, 'Ultimo error del reloj');
