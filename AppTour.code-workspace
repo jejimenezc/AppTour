@@ -2,6 +2,9 @@
     "folders": [
         {
             "path": "apps-script-legacy"
+        },
+        {
+            "path": "firebase-live-app"
         }
     ]
 }
