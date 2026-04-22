@@ -13,6 +13,7 @@
   const CONTROL_HEARTBEAT_MIN_SECONDS = 3;
   const CONTROL_HEARTBEAT_MAX_SECONDS = 30;
   const CONTROL_HEARTBEAT_LEASE_MS = 15000;
+  const CONTROL_HEARTBEAT_LEASE_PATH = 'control/heartbeatLease';
   const FIREBASE_CONFIG = {
     apiKey: 'AIzaSyB1Nrl8x_wJqBzy1uzqLGOdM243h8Dw6Fw',
     authDomain: 'appttour.firebaseapp.com',
@@ -1999,7 +2000,7 @@
       }
 
       if (!controlHeartbeatLeaseRef) {
-        controlHeartbeatLeaseRef = db.ref('system/controlHeartbeatLease');
+        controlHeartbeatLeaseRef = db.ref(CONTROL_HEARTBEAT_LEASE_PATH);
       }
 
       const nowMs = Date.now();
@@ -2047,7 +2048,7 @@
 
   function releaseControlHeartbeatLease_() {
     if (!db) return;
-    const ref = controlHeartbeatLeaseRef || db.ref('system/controlHeartbeatLease');
+    const ref = controlHeartbeatLeaseRef || db.ref(CONTROL_HEARTBEAT_LEASE_PATH);
     ref.transaction(function (current) {
       const currentOwnerId = current && current.ownerId ? String(current.ownerId) : '';
       if (!currentOwnerId || currentOwnerId !== controlHeartbeatClientId) {
