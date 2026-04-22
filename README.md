@@ -57,7 +57,7 @@ Cuando el cliente proyecta tiempo local:
 Direccion vigente:
 
 - el cliente usa snapshot base del reloj y proyecta localmente
-- el siguiente refinamiento deseado es basarse en `serverTimeOffset`
+- el contrato siguiente y ya deseado es basarse en `serverTimeOffset` / `serverNow` y un Estado de Tiempo explicito
 
 ## Arquitectura tecnica actual
 
@@ -140,6 +140,79 @@ Bajo el nuevo marco mental:
 - pero la tendencia es hacerlo mas liviano
 - y dejar de enviar estados temporales ya resueltos
 
+### Contrato de Estado de Tiempo
+
+Este contrato pasa a ser la base de la nueva Publica.
+
+La idea es separar:
+
+- `snapshot estructural`
+- `estado de tiempo`
+
+#### Elementos esperados
+
+El servidor debe exponer, directa o indirectamente:
+
+- `timerStatus`
+- `serverNow`
+- `serverTimeOffset` o datos para calcularlo
+- `currentBlock`
+- `currentPhase`
+- `phaseRemainingMs`
+- `phases`
+
+Ejemplo conceptual:
+
+```json
+{
+  "system": {
+    "currentBlock": 2,
+    "currentPhase": "playing",
+    "timerStatus": "running",
+    "serverNow": 1779249605000,
+    "phases": {
+      "live": { "durationMs": 300000 },
+      "closing": { "durationMs": 1200000 },
+      "transition": { "durationMs": 300000 }
+    },
+    "phaseRemainingMs": 850000
+  }
+}
+```
+
+#### Regla del cliente
+
+El cliente calcula:
+
+- `offset = serverNow - Date.now()`
+- `effectiveNow = Date.now() + offset`
+
+Si `timerStatus === "running"`:
+
+- proyecta el final de la fase actual
+- descuenta localmente
+- cambia visualmente de fase cuando el tiempo llega a cero
+
+Si `timerStatus === "paused"`:
+
+- muestra `phaseRemainingMs` congelado
+
+#### Regla del servidor
+
+El servidor actua como auditor:
+
+- verifica periodicamente en que fase deberia estar el torneo
+- corrige si el desface supera un umbral
+- publica estructura nueva solo cuando cambia algo estructural
+
+#### Umbral de resincronizacion
+
+La correccion server-side no debe romper innecesariamente la animacion local.
+
+Regla sugerida:
+
+- si el desface es mayor a 5 segundos, la referencia del servidor corrige la base local
+
 ### Handoff estructural
 
 El handoff entre bloques ya no depende de transiciones visuales publicadas continuamente.
@@ -165,25 +238,6 @@ El publish publico ocurre cuando hace falta, por ejemplo:
 - al programar estructura
 - en handoff entre bloques
 
-### Burst corto de refuerzo
-
-En momentos estructurales criticos se agrego un refuerzo de republishes sobre `partidos`.
-
-Uso actual:
-
-- programacion inicial
-- inicio del cronometro
-- confirmacion de grupos
-- programacion de final de dobles
-- handoff entre bloques
-
-Los refuerzos se hacen a:
-
-- `+3 s`
-- `+8 s`
-
-y escriben solo `partidos`, no `system`.
-
 ## Estado actual de Pantalla Publica
 
 La Publica ya esta a medio camino en el cambio de paradigma.
@@ -195,16 +249,16 @@ Ya existe:
 - resync al volver a foco
 - monotonicidad basica de snapshots
 - empty state amable
-- refuerzo corto de snapshots estructurales
 
 Problema aun abierto:
 
-- la Publica todavia conserva partes de un enfoque hibrido
-- aun lee y mezcla estados del snapshot que deberian deducirse solo por tiempo
+- la Publica todavia necesita consolidarse sobre un Contrato de Estado de Tiempo explicito
+- el reloj y el bloque deben pasar a derivarse desde tiempo efectivo + fases, no desde estados temporales serializados
 
 Direccion inmediata:
 
-- dejar que la Publica derive estados temporales solo desde tiempos
+- rehacer la Publica sobre el Contrato de Estado de Tiempo
+- dejar que derive estados temporales solo desde tiempos y fases
 - dejar los estados duros como datos de evento en Firebase
 
 ## Ciclo de vida deseado del bloque
@@ -266,6 +320,5 @@ Si en una proxima sesion se indica "lee `AGENTS.md` y `README.md`", el contexto 
 - la hipotesis del heartbeat como scheduler ya esta cerrada
 - estamos migrando a sincronizacion por pantalla
 - el servidor publica estructura y eventos
-- la Publica debe derivar tiempo localmente
+- la Publica debe derivar tiempo localmente usando un Contrato de Estado de Tiempo
 - se trabaja pantalla por pantalla, no por rediseño global abstracto
-

@@ -127,13 +127,95 @@ Definicion:
 
 El reloj visible en cliente debe usar referencia de servidor, no depender del reloj crudo del telefono.
 
-Marco vigente:
+Marco institucionalizado:
 
-- el snapshot entrega base temporal del torneo
-- el cliente proyecta localmente
-- el siguiente paso deseado es usar `serverTimeOffset` para alinear mejor el tiempo local con el tiempo del servidor
+- la estructura del bloque y el estado del tiempo son contratos distintos
+- el cliente anima el segundero
+- el servidor entrega la referencia de tiempo y audita desfaces
+- `snapshotVersion` sirve para frescura estructural
+- `serverTimeOffset` y/o `serverNow` sirven para alinear el reloj efectivo del cliente
 
-`snapshotVersion` sigue siendo util para frescura estructural, no para calcular el reloj.
+## Contrato de Estado de Tiempo
+
+Este contrato ya debe considerarse la direccion oficial para la Publica y para las siguientes pantallas que dependan de tiempo.
+
+### Objetivo
+
+Separar:
+
+- estructura del bloque
+- eventos duros
+- estado del tiempo
+
+La UI no debe depender de republishes de estado temporal. La UI debe poder recorrer localmente las fases del bloque usando un reloj efectivo alineado a servidor.
+
+### Componentes del contrato
+
+El servidor publica:
+
+- `timerStatus`
+- `serverNow`
+- `serverTimeOffset` o la informacion suficiente para calcularlo
+- `currentBlock`
+- `currentPhase`
+- `phaseRemainingMs`
+- `phases` o el mapa equivalente de duraciones y orden
+
+El cliente calcula:
+
+- `effectiveNow = Date.now() + offset`
+- el fin de la fase actual
+- la transicion visual a la siguiente fase cuando corresponda
+
+### Regla de autonomia del cliente
+
+Si `timerStatus === "running"`:
+
+- el cliente descuenta localmente el tiempo restante
+- si la fase llega a cero, avanza visualmente a la siguiente fase del bloque
+
+Si `timerStatus === "paused"`:
+
+- el cliente muestra el tiempo congelado
+- no avanza de fase
+
+### Regla de auditoria del servidor
+
+El servidor no necesita dirigir cada segundo de la UX.
+
+Su rol es:
+
+- verificar en ciclos lentos en que fase deberia estar el torneo
+- corregir discrepancias significativas
+- publicar cambios estructurales o correcciones temporales cuando haga falta
+
+### Regla de resincronizacion
+
+El tiempo del servidor sobrescribe al tiempo local solo cuando la diferencia supera un umbral razonable.
+
+Ejemplo:
+
+- si el desfase es mayor a 5 segundos, el cliente se corrige
+
+### Regla de aplicacion
+
+Para Pantalla Publica:
+
+- el bloque es una secuencia ordenada de fases
+- la App calcula visualmente `scheduled/live/closing/transition/closed`
+- el JSON no debe transportar esos estados temporales resueltos
+
+## Regla del nodo publico
+
+El nodo publico debe quedar modelado como:
+
+- estructura del bloque
+- eventos duros por partido
+- contrato de tiempo para la fase actual
+
+No como:
+
+- mezcla de estructura + estado temporal ya resuelto por servidor
 
 ## Regla de Firebase
 
@@ -151,7 +233,6 @@ No se preserva compatibilidad por si misma con contratos anteriores si eso estor
 
 - separar tick del motor y publish publico
 - publicar snapshots estructurales solo cuando hace falta
-- usar burst corto de refuerzo en momentos estructurales criticos
 - tratar `transition` como estado de consolidacion server-side y `Cerrado/Terminado` en UX
 - pausar automaticamente el reloj cuando el torneo entra en `awaiting_singles_group_confirmation`
 - mover trafico caliente fuera de `system` cuando sea posible
@@ -185,6 +266,4 @@ Estamos en la etapa de consolidar la nueva arquitectura para Pantalla Publica:
 - handoff estructural entre bloques ya existe
 - el reloj local ya se proyecta en cliente
 - hay protecciones de monotonicidad para snapshots
-- existen republishes cortos de refuerzo en momentos estructurales
-- el siguiente salto conceptual es abandonar el enfoque hibrido y calcular estado temporal solo desde tiempos
-
+- el siguiente salto conceptual es formalizar el Contrato de Estado de Tiempo y rehacer la Publica sobre esa base
