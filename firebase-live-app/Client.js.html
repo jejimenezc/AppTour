@@ -308,8 +308,22 @@
   }
 
   function renderPublicScreen(vm) {
+    const previousBlockId = currentPublicVm && currentPublicVm.currentBlock
+      ? String(currentPublicVm.currentBlock.id || '').trim()
+      : '';
+    const nextBlockId = vm && vm.currentBlock
+      ? String(vm.currentBlock.id || '').trim()
+      : '';
+    const didBlockChange = previousBlockId !== nextBlockId;
+
+    if (didBlockChange) {
+      resetPublicDerivedBlockState_();
+    }
+
     currentPublicVm = vm;
-    updateAppHeaderClockSnapshot(vm && vm.clock ? vm.clock : null);
+    updateAppHeaderClockSnapshot(vm && vm.clock ? vm.clock : null, {
+      forceResetProjection: didBlockChange,
+    });
     renderPublicScreenAtClientTime_();
   }
 
@@ -506,8 +520,8 @@
 
     return {
       tournamentStatus: realtimeMeta.tournamentStatus || baseVm.tournamentStatus || 'live',
-      currentBlock: realtimeMeta.currentBlock || baseVm.currentBlock || null,
-      clock: realtimeMeta.clock || baseVm.clock || null,
+      currentBlock: realtimeMeta.hasCurrentBlock ? realtimeMeta.currentBlock : (baseVm.currentBlock || null),
+      clock: realtimeMeta.hasClock ? realtimeMeta.clock : (baseVm.clock || null),
       matches: matches,
       generatedAt: generatedAt,
       snapshotVersion: realtimeMeta.snapshotVersion || generatedAt,
@@ -530,10 +544,12 @@
 
     return {
       tournamentStatus: String(source.tournamentStatus || '').trim(),
-      currentBlock: source.currentBlock || null,
+      currentBlock: Object.prototype.hasOwnProperty.call(source, 'currentBlock') ? source.currentBlock : null,
+      hasCurrentBlock: Object.prototype.hasOwnProperty.call(source, 'currentBlock'),
       generatedAt: String(source.generatedAt || '').trim(),
       snapshotVersion: String(source.snapshotVersion || source.generatedAt || '').trim(),
-      clock: source.clock || null,
+      clock: Object.prototype.hasOwnProperty.call(source, 'clock') ? source.clock : null,
+      hasClock: Object.prototype.hasOwnProperty.call(source, 'clock'),
       source: String(source.source || '').trim(),
     };
   }
@@ -564,11 +580,12 @@
     return String(value || '').trim();
   }
 
-  function updateAppHeaderClockSnapshot(clock) {
+  function updateAppHeaderClockSnapshot(clock, options) {
     if (!clock) return;
 
+    const opts = options || {};
     const receivedAtMs = Date.now();
-    const previousProjectedSnapshot = getProjectedClockSnapshot_();
+    const previousProjectedSnapshot = opts.forceResetProjection ? null : getProjectedClockSnapshot_();
     let nextInternalNowMs = parseCanonicalDateTime(clock.internalNowTs);
     let nextRealNowMs = parseCanonicalDateTime(clock.realNowTs);
     const nextIsRunning = !!clock.isRunning;
@@ -597,6 +614,11 @@
     };
 
     updateAppHeaderClock();
+  }
+
+  function resetPublicDerivedBlockState_() {
+    publicLastDerivedBlockId = '';
+    publicLastDerivedBlockStatus = '';
   }
 
   function getProjectedClockSnapshot_() {
