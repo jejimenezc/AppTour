@@ -97,6 +97,8 @@ function runTournamentClockTickWithOptions_(options) {
   }
 
   try {
+    const previousCurrentBlock = getCurrentBlock();
+    const previousCurrentBlockId = String(previousCurrentBlock && previousCurrentBlock.block_id || '').trim();
     const tickResult = tickTournamentClock();
     setConfigValue('clock_trigger_last_run_at', nowIso(), opts.auditNote || 'Ultima ejecucion del reloj');
     setConfigValue(
@@ -105,9 +107,13 @@ function runTournamentClockTickWithOptions_(options) {
       'Ultimo tiempo interno procesado por el motor'
     );
     setConfigValue('clock_trigger_last_error', '', 'Ultimo error del reloj');
-    const publishResult = opts.publishRealtime === false
-      ? null
-      : publishRealtimeSnapshotToFirebase();
+    const currentBlockAfterTick = getCurrentBlock();
+    const currentBlockAfterTickId = String(currentBlockAfterTick && currentBlockAfterTick.block_id || '').trim();
+    const shouldPublishRealtime = opts.publishRealtime !== false ||
+      shouldPublishPublicSnapshotAfterTick_(previousCurrentBlockId, currentBlockAfterTickId);
+    const publishResult = shouldPublishRealtime
+      ? publishRealtimeSnapshotToFirebase()
+      : null;
 
     return {
       ok: true,
@@ -122,6 +128,10 @@ function runTournamentClockTickWithOptions_(options) {
   } finally {
     lock.releaseLock();
   }
+}
+
+function shouldPublishPublicSnapshotAfterTick_(previousCurrentBlockId, nextCurrentBlockId) {
+  return String(previousCurrentBlockId || '').trim() !== String(nextCurrentBlockId || '').trim();
 }
 
 /**
