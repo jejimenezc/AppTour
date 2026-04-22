@@ -1,7 +1,5 @@
 const FIREBASE_RTDB_BASE_URL = 'https://appttour-default-rtdb.firebaseio.com';
 const FIREBASE_RTDB_AUTH_TOKEN = 'lt5kKHnJGZMrT0pL2ZxokPLk8zFzu22G9VlmQ8ws';
-const REALTIME_PUBLIC_BURST_HANDLER = 'runRealtimePublicSnapshotBurstRepublish';
-const REALTIME_PUBLIC_BURST_DELAYS_MS = [3000, 8000];
 
 function publishPartidosToFirebase() {
   return publishPartidosSnapshotToFirebase();
@@ -55,27 +53,6 @@ function publishPartidosSnapshotToFirebase() {
       partidos: publicResponse.statusCode,
     },
   };
-}
-
-function scheduleRealtimePublicSnapshotBurst_() {
-  removeProjectTriggersByHandler_(REALTIME_PUBLIC_BURST_HANDLER);
-
-  REALTIME_PUBLIC_BURST_DELAYS_MS.forEach(function (delayMs) {
-    ScriptApp.newTrigger(REALTIME_PUBLIC_BURST_HANDLER)
-      .timeBased()
-      .after(delayMs)
-      .create();
-  });
-
-  return {
-    ok: true,
-    handler: REALTIME_PUBLIC_BURST_HANDLER,
-    delaysMs: REALTIME_PUBLIC_BURST_DELAYS_MS.slice(),
-  };
-}
-
-function runRealtimePublicSnapshotBurstRepublish() {
-  return publishPartidosSnapshotToFirebase();
 }
 
 function buildRealtimeSnapshotPayload_() {
@@ -253,7 +230,7 @@ function buildPartidosFirebasePayload_(publicVm) {
 
   return {
     tournamentStatus: String(vm.tournamentStatus || '').trim(),
-    currentBlock: vm.currentBlock || null,
+    currentBlock: sanitizePublicCurrentBlockForFirebase_(vm.currentBlock),
     clock: vm.clock || null,
     generatedAt: String(vm.generatedAt || '').trim(),
     snapshotVersion: String(vm.snapshotVersion || vm.generatedAt || '').trim(),
@@ -268,13 +245,39 @@ function buildPartidosFirebasePayload_(publicVm) {
         rightLabel: String(match && match.rightLabel || '').trim(),
         matchupLabel: String(match && match.matchupLabel || '').trim(),
         refereeLabel: String(match && match.refereeLabel || '').trim(),
-        status: String(match && match.status || '').trim(),
-        resultMode: String(match && match.resultMode || '').trim(),
-        closingState: String(match && match.closingState || '').trim(),
+        eventState: sanitizePublicMatchEventStateForFirebase_(match && match.eventState),
         setsA: match && Object.prototype.hasOwnProperty.call(match, 'setsA') ? match.setsA : '',
         setsB: match && Object.prototype.hasOwnProperty.call(match, 'setsB') ? match.setsB : '',
       };
     }),
+  };
+}
+
+function sanitizePublicCurrentBlockForFirebase_(currentBlock) {
+  if (!currentBlock) return null;
+
+  return {
+    id: currentBlock.id,
+    phaseType: String(currentBlock.phaseType || '').trim(),
+    phaseLabel: String(currentBlock.phaseLabel || '').trim(),
+    startTs: String(currentBlock.startTs || '').trim(),
+    closeSignalTs: String(currentBlock.closeSignalTs || '').trim(),
+    hardCloseTs: String(currentBlock.hardCloseTs || '').trim(),
+    endTs: String(currentBlock.endTs || '').trim(),
+  };
+}
+
+function sanitizePublicMatchEventStateForFirebase_(eventState) {
+  const source = eventState && typeof eventState === 'object' ? eventState : {};
+
+  return {
+    resultSubmitted: !!source.resultSubmitted,
+    autoClosed: !!source.autoClosed,
+    walkover: !!source.walkover,
+    tableBlocked: !!source.tableBlocked,
+    needsReview: !!source.needsReview,
+    resultMode: String(source.resultMode || '').trim(),
+    closingState: String(source.closingState || '').trim(),
   };
 }
 

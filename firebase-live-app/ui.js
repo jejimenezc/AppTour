@@ -38,7 +38,6 @@ function getPublicViewModel() {
           id: currentBlock.block_id,
           phaseType: currentBlock.phase_type,
           phaseLabel: currentBlock.phase_label,
-          status: currentBlock.status,
           startTs: serializeDateForClient(currentBlock.start_ts),
           closeSignalTs: serializeDateForClient(currentBlock.close_signal_ts),
           hardCloseTs: serializeDateForClient(currentBlock.hard_close_ts),
@@ -778,7 +777,7 @@ function initializeTournamentFlowV2FromUi() {
   initializeTournamentFlowV2();
   const vm = getAdminControlViewModel();
   vm.lastActionMessage = 'Reset V2 aplicado. Base limpia, ventana de dobles abierta y cronometro pausado en 00:00:00.';
-  return publishRealtimeSnapshotAfterStructuralMutation_(vm);
+  return publishRealtimeSnapshotAfterMutation_(vm);
 }
 
 function seedDemoDoublesConfigFromUi() {
@@ -821,7 +820,7 @@ function programDoublesTournamentFromUi() {
 
   const vm = getAdminControlViewModel();
   vm.lastActionMessage = `Torneo programado. Bloque ${blockId} queda scheduled con cronometro en 00:00:00 y pausado.`;
-  return publishRealtimeSnapshotAfterStructuralMutation_(vm);
+  return publishRealtimeSnapshotAfterMutation_(vm);
 }
 
 function runTournamentClockNowFromUi() {
@@ -859,9 +858,7 @@ function setClockTriggerEnabledFromUi(enabled) {
   vm.lastActionMessage = nextValue
     ? 'Cronometro iniciado. El reloj logico ya corre y se publico el snapshot actualizado.'
     : 'Cronometro pausado. El reloj logico queda congelado y se publico el snapshot actualizado.';
-  return nextValue
-    ? publishRealtimeSnapshotAfterStructuralMutation_(vm)
-    : publishRealtimeSnapshotAfterMutation_(vm);
+  return publishRealtimeSnapshotAfterMutation_(vm);
 }
 
 function setAutoTriggerForTestFromUi(enabled) {
@@ -887,7 +884,7 @@ function confirmSinglesGroupsFromUi() {
   confirmSinglesGroupsAndStartGroupStage();
   const vm = getAdminControlViewModel();
   vm.lastActionMessage = 'Grupos confirmados. Fase de grupos iniciada.';
-  return publishRealtimeSnapshotAfterStructuralMutation_(vm);
+  return publishRealtimeSnapshotAfterMutation_(vm);
 }
 
 function scheduleDoublesFinalFromUi() {
@@ -898,7 +895,7 @@ function scheduleDoublesFinalFromUi() {
 
   const vm = getAdminControlViewModel();
   vm.lastActionMessage = `Final de dobles programada en bloque ${blockId}.`;
-  return publishRealtimeSnapshotAfterStructuralMutation_(vm);
+  return publishRealtimeSnapshotAfterMutation_(vm);
 }
 
 function startDemoTournamentNowFromUi() {
@@ -929,12 +926,6 @@ function publishRealtimeSnapshotAfterMutation_(result, playerIds) {
     publishPlayerRealtimeViewsToFirebase(playerIds);
   }
   return result;
-}
-
-function publishRealtimeSnapshotAfterStructuralMutation_(result, playerIds) {
-  const response = publishRealtimeSnapshotAfterMutation_(result, playerIds);
-  scheduleRealtimePublicSnapshotBurst_();
-  return response;
 }
 
 function normalizeTournamentStartInput_(rawValue) {
@@ -1103,11 +1094,25 @@ function mapMatchForPublicView(match, currentBlock) {
     rightLabel,
     matchupLabel: buildMatchupLabel(match),
     refereeLabel: refereeLabel ? `Árbitro: ${refereeLabel}` : '',
-    status: mapMatchStatusLabel(match.status, currentBlock),
-    resultMode: String(match.result_mode || ''),
-    closingState: String(match.closing_state || ''),
+    eventState: buildPublicMatchEventState_(match),
     setsA: valueForClient(match.sets_a),
     setsB: valueForClient(match.sets_b),
+  };
+}
+
+function buildPublicMatchEventState_(match) {
+  const rawStatus = String(match && match.status || '').trim();
+  const resultMode = String(match && match.result_mode || '').trim();
+  const closingState = String(match && match.closing_state || '').trim();
+
+  return {
+    resultSubmitted: rawStatus === 'result_submitted',
+    autoClosed: rawStatus === 'auto_closed',
+    walkover: resultMode === 'wo' || closingState === 'wo',
+    tableBlocked: resultMode === 'table_blocked' || closingState === 'table_blocked',
+    needsReview: !!(match && match.needs_review),
+    resultMode: resultMode,
+    closingState: closingState,
   };
 }
 

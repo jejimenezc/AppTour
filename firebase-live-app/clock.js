@@ -114,9 +114,6 @@ function runTournamentClockTickWithOptions_(options) {
     const publishResult = shouldPublishRealtime
       ? publishRealtimeSnapshotToFirebase()
       : null;
-    if (didPublicBlockHandoff) {
-      scheduleRealtimePublicSnapshotBurst_();
-    }
 
     return {
       ok: true,
