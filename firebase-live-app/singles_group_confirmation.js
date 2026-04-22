@@ -3,6 +3,7 @@
  * Genera propuesta inicial en proposed_group_id / proposed_group_slot.
  */
 function openSinglesGroupConfirmationWindow() {
+  pauseTournamentInternalClock();
   clearProposedGroups();
   generateProposedSinglesGroups();
   setConfigValue('tournament_status', 'awaiting_singles_group_confirmation', 'Ventana de confirmacion de grupos abierta');
