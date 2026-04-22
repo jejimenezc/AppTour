@@ -29,6 +29,8 @@
   let publicRealtimeSnapshotReceived = false;
   let publicRealtimeBootstrapTimer = null;
   let currentPublicVm = null;
+  let publicLastDerivedBlockId = '';
+  let publicLastDerivedBlockStatus = '';
   let currentMyDayVm = null;
   let currentSinglesGroupsVm = null;
   let currentDoublesVm = null;
@@ -308,6 +310,11 @@
   function renderPublicScreen(vm) {
     currentPublicVm = vm;
     updateAppHeaderClockSnapshot(vm && vm.clock ? vm.clock : null);
+    renderPublicScreenAtClientTime_();
+  }
+
+  function renderPublicScreenAtClientTime_() {
+    const vm = buildPublicVmForClientTime_(currentPublicVm);
     renderTopStats(vm);
     renderPublicDebug(vm);
     renderPublicMatches(vm);
@@ -560,25 +567,63 @@
   function updateAppHeaderClockSnapshot(clock) {
     if (!clock) return;
 
+    const receivedAtMs = Date.now();
+    const previousProjectedSnapshot = getProjectedClockSnapshot_();
+    let nextInternalNowMs = parseCanonicalDateTime(clock.internalNowTs);
+    let nextRealNowMs = parseCanonicalDateTime(clock.realNowTs);
+    const nextIsRunning = !!clock.isRunning;
+
+    if (
+      previousProjectedSnapshot &&
+      previousProjectedSnapshot.internalNowMs &&
+      previousProjectedSnapshot.isRunning &&
+      nextIsRunning &&
+      previousProjectedSnapshot.internalNowMs > nextInternalNowMs
+    ) {
+      nextInternalNowMs = previousProjectedSnapshot.internalNowMs;
+      nextRealNowMs = Math.max(nextRealNowMs || 0, previousProjectedSnapshot.realNowMs || 0);
+    }
+
     appHeaderClockSnapshot = {
       tournamentStartMs: parseCanonicalDateTime(clock.tournamentStartTs),
-      internalNowMs: parseCanonicalDateTime(clock.internalNowTs),
-      realNowMs: parseCanonicalDateTime(clock.realNowTs),
+      internalNowMs: nextInternalNowMs,
+      realNowMs: nextRealNowMs,
       internalNowTs: String(clock.internalNowTs || '').trim(),
-      isRunning: !!clock.isRunning,
+      isRunning: nextIsRunning,
       health: String(clock.clockHealth || 'ok'),
       healthMessage: String(clock.clockHealthMessage || ''),
       triggerLastRunAt: String(clock.triggerLastRunAt || '').trim(),
+      receivedAtMs: receivedAtMs,
     };
 
     updateAppHeaderClock();
+  }
+
+  function getProjectedClockSnapshot_() {
+    const snapshot = appHeaderClockSnapshot;
+    if (!snapshot || !snapshot.internalNowMs) {
+      return null;
+    }
+
+    const referenceReceivedAtMs = snapshot.receivedAtMs || Date.now();
+    const driftMs = snapshot.isRunning
+      ? Math.max(0, Date.now() - referenceReceivedAtMs)
+      : 0;
+    const internalNowMs = snapshot.internalNowMs + driftMs;
+    const realNowMs = (snapshot.realNowMs || referenceReceivedAtMs) + driftMs;
+
+    return Object.assign({}, snapshot, {
+      internalNowMs: internalNowMs,
+      realNowMs: realNowMs,
+      internalNowTs: formatClockStamp(internalNowMs),
+    });
   }
 
   function updateAppHeaderClock() {
     const root = document.getElementById('app-clock-header');
     if (!root) return;
 
-    const snapshot = appHeaderClockSnapshot;
+    const snapshot = getProjectedClockSnapshot_() || appHeaderClockSnapshot;
     if (!snapshot || !snapshot.tournamentStartMs || !snapshot.internalNowMs) {
       root.textContent = 'Cronometro del torneo: --:--:-- | Estado: sin snapshot | Hora interna: -';
       return;
@@ -590,6 +635,10 @@
     const healthSuffix = snapshot.health && snapshot.health !== 'ok' ? ` | ${snapshot.healthMessage || snapshot.health}` : '';
 
     root.textContent = `Cronometro del torneo: ${formatElapsedClock(elapsedSinceStartMs)} | Estado: ${runningLabel} | Hora interna: ${formatClockStamp(internalNowMs)}${healthSuffix}`;
+
+    if (currentPublicVm && getSavedAppScreen() === 'public') {
+      renderPublicScreenAtClientTime_();
+    }
   }
 
   function formatRealtimeGeneratedAt() {
@@ -748,10 +797,97 @@
     let cls = 'status-closed';
 
     if (value === 'En juego') cls = 'status-live';
+    else if (value === 'Programado') cls = 'status-pending';
     else if (value === 'Pendiente') cls = 'status-pending';
     else if (value === 'Resultado ingresado') cls = 'status-done';
+    else if (value === 'Cierre en curso') cls = 'status-live';
 
-    return `<span class="status-pill ${cls}">${escapeHtml(value || '—')}</span>`;
+    return `<span class="status-pill ${cls}">${escapeHtml(value || '-')}</span>`;
+  }
+
+  function buildPublicVmForClientTime_(vm) {
+    const baseVm = vm || {};
+    const projectedClock = getProjectedClockSnapshot_();
+    const currentBlock = baseVm.currentBlock ? Object.assign({}, baseVm.currentBlock) : null;
+    const matches = Array.isArray(baseVm.matches) ? baseVm.matches.map(function (match) {
+      return Object.assign({}, match);
+    }) : [];
+
+    if (!projectedClock || !currentBlock) {
+      return Object.assign({}, baseVm, {
+        currentBlock: currentBlock,
+        matches: matches,
+      });
+    }
+
+    const expectedBlockStatus = getExpectedBlockStatus(currentBlock, projectedClock.internalNowMs);
+    const currentBlockId = String(currentBlock.id || '').trim();
+    const mergedBlockStatus = mergeMonotonicBlockStatus_(currentBlockId, expectedBlockStatus || currentBlock.status || '');
+    currentBlock.status = mergedBlockStatus;
+
+    matches.forEach(function (match) {
+      match.status = derivePublicMatchStatus_(match, currentBlock, projectedClock.internalNowMs);
+    });
+
+    return Object.assign({}, baseVm, {
+      currentBlock: currentBlock,
+      matches: matches,
+      clock: Object.assign({}, baseVm.clock || {}, {
+        internalNowTs: formatClockStamp(projectedClock.internalNowMs),
+        realNowTs: formatClockStamp(projectedClock.realNowMs),
+      }),
+    });
+  }
+
+  function derivePublicMatchStatus_(match, currentBlock, internalNowMs) {
+    const currentStatus = String(match && match.status || '').trim();
+    const expectedBlockStatus = String(currentBlock && currentBlock.status || getExpectedBlockStatus(currentBlock, internalNowMs) || '').trim();
+
+    if (!expectedBlockStatus) return currentStatus;
+    if (currentStatus === 'Resultado ingresado' || currentStatus === 'Cerrado') return currentStatus;
+    if (expectedBlockStatus === 'scheduled') return 'Programado';
+    if (expectedBlockStatus === 'live') return 'En juego';
+    if (expectedBlockStatus === 'closing') return 'Cierre en curso';
+    if (expectedBlockStatus === 'transition' || expectedBlockStatus === 'closed') return 'Cerrado/Terminado';
+
+    return currentStatus;
+  }
+
+  function mergeMonotonicBlockStatus_(blockId, nextStatus) {
+    const normalizedBlockId = String(blockId || '').trim();
+    const normalizedNextStatus = String(nextStatus || '').trim();
+    if (!normalizedBlockId) {
+      publicLastDerivedBlockId = '';
+      publicLastDerivedBlockStatus = '';
+      return normalizedNextStatus;
+    }
+
+    if (publicLastDerivedBlockId !== normalizedBlockId) {
+      publicLastDerivedBlockId = normalizedBlockId;
+      publicLastDerivedBlockStatus = normalizedNextStatus;
+      return normalizedNextStatus;
+    }
+
+    const merged = getMoreAdvancedBlockStatus_(publicLastDerivedBlockStatus, normalizedNextStatus);
+    publicLastDerivedBlockStatus = merged;
+    return merged;
+  }
+
+  function getMoreAdvancedBlockStatus_(leftStatus, rightStatus) {
+    const rank = {
+      scheduled: 1,
+      live: 2,
+      closing: 3,
+      transition: 4,
+      closed: 5,
+    };
+
+    const left = String(leftStatus || '').trim();
+    const right = String(rightStatus || '').trim();
+    const leftRank = Object.prototype.hasOwnProperty.call(rank, left) ? rank[left] : 0;
+    const rightRank = Object.prototype.hasOwnProperty.call(rank, right) ? rank[right] : 0;
+
+    return leftRank >= rightRank ? left : right;
   }
 
   function renderPublicScreenError(error) {
@@ -3119,8 +3255,11 @@
   }
 
   function parseCanonicalDateTime(value) {
-    const text = String(value || '').trim();
+    let text = String(value || '').trim();
     if (!text) return 0;
+    if (text.charAt(0) === "'") {
+      text = text.slice(1).trim();
+    }
 
     const match = text.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/);
     if (!match) return 0;

@@ -848,26 +848,18 @@ function syncTournamentClockHeartbeatFromUi() {
 
 function setClockTriggerEnabledFromUi(enabled) {
   const nextValue = !!enabled;
-  let alreadyPublished = false;
 
   if (nextValue) {
     resumeTournamentInternalClock();
-    const triggerStatus = getTournamentClockTriggerStatus();
-    if (Number(triggerStatus.triggerCount || 0) === 0) {
-      installTournamentClockTrigger();
-    } else {
-      setConfigValue('clock_trigger_enabled', true, 'Habilita el trigger automatico del reloj');
-    }
-    runTickAndPublishRealtime();
-    alreadyPublished = true;
   } else {
     pauseTournamentInternalClock();
-    removeTournamentClockTriggers();
   }
 
   const vm = getAdminControlViewModel();
-  vm.lastActionMessage = nextValue ? 'Cronometro iniciado. El bloque programado avanza segun el tick.' : 'Cronometro pausado.';
-  return alreadyPublished ? vm : publishRealtimeSnapshotAfterMutation_(vm);
+  vm.lastActionMessage = nextValue
+    ? 'Cronometro iniciado. El reloj logico ya corre y se publico el snapshot actualizado.'
+    : 'Cronometro pausado. El reloj logico queda congelado y se publico el snapshot actualizado.';
+  return publishRealtimeSnapshotAfterMutation_(vm);
 }
 
 function setAutoTriggerForTestFromUi(enabled) {
