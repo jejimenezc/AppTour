@@ -30,6 +30,7 @@
   let publicRealtimeSnapshotReceived = false;
   let publicRealtimeBootstrapTimer = null;
   let currentPublicVm = null;
+  let publicHighestSnapshotVersionSeen = '';
   let publicLastDerivedBlockId = '';
   let publicLastDerivedBlockStatus = '';
   let currentMyDayVm = null;
@@ -107,6 +108,7 @@
 
     document.addEventListener('visibilitychange', function () {
       if (document.visibilityState === 'visible') {
+        resyncPublicScreenOnFocus_();
         if (controlHeartbeatEnabled) {
           updateControlHeartbeatUi();
           startControlHeartbeatLoopIfNeeded_();
@@ -117,6 +119,10 @@
       }
 
       releaseControlHeartbeatWakeLock_();
+    });
+
+    window.addEventListener('focus', function () {
+      resyncPublicScreenOnFocus_();
     });
 
     window.addEventListener('beforeunload', function () {
@@ -245,6 +251,20 @@
     publicRealtimeBootstrapTimer = null;
   }
 
+  function resyncPublicScreenOnFocus_() {
+    if (getSavedAppScreen() !== 'public') return;
+
+    if (currentPublicVm) {
+      renderPublicScreenAtClientTime_();
+    }
+
+    if (lastRealtimePayload) {
+      applyRealtimeMatchesToViews(lastRealtimeMatches, { preserveGeneratedAt: true });
+    }
+
+    loadPublicScreen({ silent: true });
+  }
+
   function stopPublicAutoRefresh() {
     if (publicRefreshTimer) {
       window.clearInterval(publicRefreshTimer);
@@ -296,8 +316,17 @@
       .withSuccessHandler(function (vm) {
         publicLoadInFlight = false;
         publicLastSuccessAt = new Date();
-        const realtimeVm = buildRealtimePublicVmIfFresh_(vm);
-        renderPublicScreen(realtimeVm || vm);
+        const gasVm = vm || null;
+        if (gasVm) {
+          renderPublicScreen(gasVm);
+          syncRealtimeStateFromAcceptedPublicVm_(gasVm);
+        }
+
+        const realtimeVm = buildRealtimePublicVmIfFresh_(gasVm);
+        if (realtimeVm) {
+          renderPublicScreen(realtimeVm);
+          syncRealtimeStateFromAcceptedPublicVm_(realtimeVm);
+        }
         setRefreshIndicator(buildRefreshIndicatorText());
       })
       .withFailureHandler(function (error) {
@@ -309,6 +338,13 @@
   }
 
   function renderPublicScreen(vm) {
+    if (!shouldAcceptIncomingSnapshotVm_(vm)) {
+      if (currentPublicVm) {
+        renderPublicScreenAtClientTime_();
+      }
+      return;
+    }
+
     const previousBlockId = currentPublicVm && currentPublicVm.currentBlock
       ? String(currentPublicVm.currentBlock.id || '').trim()
       : '';
@@ -322,10 +358,37 @@
     }
 
     currentPublicVm = vm;
-    updateAppHeaderClockSnapshot(vm && vm.clock ? vm.clock : null, {
-      forceResetProjection: didBlockChange,
-    });
+    rememberPublicSnapshotVersion_(vm);
+    if (shouldAcceptIncomingClockBase_(vm, didBlockChange)) {
+      updateAppHeaderClockSnapshot(vm && vm.clock ? vm.clock : null, {
+        forceResetProjection: didBlockChange,
+      });
+    }
     renderPublicScreenAtClientTime_();
+  }
+
+  function shouldAcceptIncomingClockBase_(vm, didBlockChange) {
+    if (didBlockChange) return true;
+    if (!vm || !vm.clock) return false;
+
+    const incomingInternalNowMs = parseCanonicalDateTime(vm.clock.internalNowTs);
+    const projectedSnapshot = getProjectedClockSnapshot_();
+    if (!incomingInternalNowMs || !projectedSnapshot || !projectedSnapshot.internalNowMs) {
+      return true;
+    }
+
+    const currentBlockId = currentPublicVm && currentPublicVm.currentBlock
+      ? String(currentPublicVm.currentBlock.id || '').trim()
+      : '';
+    const nextBlockId = vm && vm.currentBlock
+      ? String(vm.currentBlock.id || '').trim()
+      : '';
+
+    if (!currentBlockId || currentBlockId !== nextBlockId) {
+      return true;
+    }
+
+    return projectedSnapshot.internalNowMs - incomingInternalNowMs <= 1000;
   }
 
   function renderPublicScreenAtClientTime_() {
@@ -333,6 +396,21 @@
     renderTopStats(vm);
     renderPublicDebug(vm);
     renderPublicMatches(vm);
+  }
+
+  function shouldAcceptIncomingSnapshotVm_(vm) {
+    const nextVersion = getSnapshotVersion_(vm && (vm.snapshotVersion || vm.generatedAt));
+    if (!nextVersion) return true;
+    if (!publicHighestSnapshotVersionSeen) return true;
+    return compareSnapshotVersions_(nextVersion, publicHighestSnapshotVersionSeen) >= 0;
+  }
+
+  function rememberPublicSnapshotVersion_(vm) {
+    const nextVersion = getSnapshotVersion_(vm && (vm.snapshotVersion || vm.generatedAt));
+    if (!nextVersion) return;
+    if (!publicHighestSnapshotVersionSeen || compareSnapshotVersions_(nextVersion, publicHighestSnapshotVersionSeen) >= 0) {
+      publicHighestSnapshotVersionSeen = nextVersion;
+    }
   }
 
   function renderPublicDebug(vm) {
@@ -380,7 +458,7 @@
       lastRealtimeMatches = normalizeRealtimeMatchesPayload(lastRealtimePayload);
       const realtimeMeta = extractRealtimePublicMeta(lastRealtimePayload);
       if (!shouldApplyRealtimePublicMeta_(realtimeMeta, currentPublicVm)) {
-        setRefreshIndicator('Esperando snapshot realtime mas reciente...');
+        setRefreshIndicator(buildRefreshIndicatorText());
         return;
       }
       applyRealtimeMatchesToViews(lastRealtimeMatches);
@@ -573,12 +651,45 @@
     const baseVersion = getSnapshotVersion_(baseVm && (baseVm.snapshotVersion || baseVm.generatedAt));
 
     if (!nextVersion) return true;
+    if (publicHighestSnapshotVersionSeen && compareSnapshotVersions_(nextVersion, publicHighestSnapshotVersionSeen) < 0) {
+      return false;
+    }
     if (!baseVersion) return true;
-    return nextVersion >= baseVersion;
+    return compareSnapshotVersions_(nextVersion, baseVersion) >= 0;
   }
 
   function getSnapshotVersion_(value) {
     return String(value || '').trim();
+  }
+
+  function compareSnapshotVersions_(leftValue, rightValue) {
+    const left = getSnapshotVersion_(leftValue);
+    const right = getSnapshotVersion_(rightValue);
+    if (!left && !right) return 0;
+    if (!left) return -1;
+    if (!right) return 1;
+
+    const leftNumber = Number(left);
+    const rightNumber = Number(right);
+    if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber)) {
+      if (leftNumber === rightNumber) return 0;
+      return leftNumber > rightNumber ? 1 : -1;
+    }
+
+    if (left === right) return 0;
+    return left > right ? 1 : -1;
+  }
+
+  function syncRealtimeStateFromAcceptedPublicVm_(vm) {
+    if (!vm) return;
+    const acceptedVersion = getSnapshotVersion_(vm.snapshotVersion || vm.generatedAt);
+    if (!acceptedVersion) return;
+
+    const realtimeVersion = getSnapshotVersion_(lastRealtimePayload && (lastRealtimePayload.snapshotVersion || lastRealtimePayload.generatedAt));
+    if (realtimeVersion && compareSnapshotVersions_(realtimeVersion, acceptedVersion) < 0) {
+      lastRealtimePayload = null;
+      lastRealtimeMatches = [];
+    }
   }
 
   function updateAppHeaderClockSnapshot(clock, options) {
