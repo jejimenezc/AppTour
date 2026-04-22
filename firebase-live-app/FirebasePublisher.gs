@@ -1,8 +1,10 @@
 const FIREBASE_RTDB_BASE_URL = 'https://appttour-default-rtdb.firebaseio.com';
 const FIREBASE_RTDB_AUTH_TOKEN = 'lt5kKHnJGZMrT0pL2ZxokPLk8zFzu22G9VlmQ8ws';
+const REALTIME_PUBLIC_BURST_HANDLER = 'runRealtimePublicSnapshotBurstRepublish';
+const REALTIME_PUBLIC_BURST_DELAYS_MS = [3000, 8000];
 
 function publishPartidosToFirebase() {
-  return publishRealtimeSnapshotToFirebase();
+  return publishPartidosSnapshotToFirebase();
 }
 
 function publishRealtimeSnapshotToFirebase() {
@@ -36,6 +38,44 @@ function publishRealtimeSnapshotToFirebase() {
     setConfigValue('clock_publish_last_error', message, 'Ultimo error del publish realtime');
     throw error;
   }
+}
+
+function publishPartidosSnapshotToFirebase() {
+  const snapshot = buildRealtimeSnapshotPayload_();
+  const publicResponse = writeFirebaseNode_('partidos', snapshot.partidos);
+
+  return {
+    ok: true,
+    generatedAt: snapshot.partidos.generatedAt,
+    snapshotVersion: snapshot.partidos.snapshotVersion,
+    tournamentStatus: snapshot.partidos.tournamentStatus,
+    currentBlockId: snapshot.partidos.currentBlock ? snapshot.partidos.currentBlock.id : '',
+    publishedMatches: snapshot.partidos.matches.length,
+    statusCodes: {
+      partidos: publicResponse.statusCode,
+    },
+  };
+}
+
+function scheduleRealtimePublicSnapshotBurst_() {
+  removeProjectTriggersByHandler_(REALTIME_PUBLIC_BURST_HANDLER);
+
+  REALTIME_PUBLIC_BURST_DELAYS_MS.forEach(function (delayMs) {
+    ScriptApp.newTrigger(REALTIME_PUBLIC_BURST_HANDLER)
+      .timeBased()
+      .after(delayMs)
+      .create();
+  });
+
+  return {
+    ok: true,
+    handler: REALTIME_PUBLIC_BURST_HANDLER,
+    delaysMs: REALTIME_PUBLIC_BURST_DELAYS_MS.slice(),
+  };
+}
+
+function runRealtimePublicSnapshotBurstRepublish() {
+  return publishPartidosSnapshotToFirebase();
 }
 
 function buildRealtimeSnapshotPayload_() {

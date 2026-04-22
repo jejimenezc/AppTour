@@ -109,11 +109,14 @@ function runTournamentClockTickWithOptions_(options) {
     setConfigValue('clock_trigger_last_error', '', 'Ultimo error del reloj');
     const currentBlockAfterTick = getCurrentBlock();
     const currentBlockAfterTickId = String(currentBlockAfterTick && currentBlockAfterTick.block_id || '').trim();
-    const shouldPublishRealtime = opts.publishRealtime !== false ||
-      shouldPublishPublicSnapshotAfterTick_(previousCurrentBlockId, currentBlockAfterTickId);
+    const didPublicBlockHandoff = shouldPublishPublicSnapshotAfterTick_(previousCurrentBlockId, currentBlockAfterTickId);
+    const shouldPublishRealtime = opts.publishRealtime !== false || didPublicBlockHandoff;
     const publishResult = shouldPublishRealtime
       ? publishRealtimeSnapshotToFirebase()
       : null;
+    if (didPublicBlockHandoff) {
+      scheduleRealtimePublicSnapshotBurst_();
+    }
 
     return {
       ok: true,

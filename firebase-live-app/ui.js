@@ -778,7 +778,7 @@ function initializeTournamentFlowV2FromUi() {
   initializeTournamentFlowV2();
   const vm = getAdminControlViewModel();
   vm.lastActionMessage = 'Reset V2 aplicado. Base limpia, ventana de dobles abierta y cronometro pausado en 00:00:00.';
-  return publishRealtimeSnapshotAfterMutation_(vm);
+  return publishRealtimeSnapshotAfterStructuralMutation_(vm);
 }
 
 function seedDemoDoublesConfigFromUi() {
@@ -821,7 +821,7 @@ function programDoublesTournamentFromUi() {
 
   const vm = getAdminControlViewModel();
   vm.lastActionMessage = `Torneo programado. Bloque ${blockId} queda scheduled con cronometro en 00:00:00 y pausado.`;
-  return publishRealtimeSnapshotAfterMutation_(vm);
+  return publishRealtimeSnapshotAfterStructuralMutation_(vm);
 }
 
 function runTournamentClockNowFromUi() {
@@ -859,7 +859,9 @@ function setClockTriggerEnabledFromUi(enabled) {
   vm.lastActionMessage = nextValue
     ? 'Cronometro iniciado. El reloj logico ya corre y se publico el snapshot actualizado.'
     : 'Cronometro pausado. El reloj logico queda congelado y se publico el snapshot actualizado.';
-  return publishRealtimeSnapshotAfterMutation_(vm);
+  return nextValue
+    ? publishRealtimeSnapshotAfterStructuralMutation_(vm)
+    : publishRealtimeSnapshotAfterMutation_(vm);
 }
 
 function setAutoTriggerForTestFromUi(enabled) {
@@ -885,7 +887,7 @@ function confirmSinglesGroupsFromUi() {
   confirmSinglesGroupsAndStartGroupStage();
   const vm = getAdminControlViewModel();
   vm.lastActionMessage = 'Grupos confirmados. Fase de grupos iniciada.';
-  return publishRealtimeSnapshotAfterMutation_(vm);
+  return publishRealtimeSnapshotAfterStructuralMutation_(vm);
 }
 
 function scheduleDoublesFinalFromUi() {
@@ -896,7 +898,7 @@ function scheduleDoublesFinalFromUi() {
 
   const vm = getAdminControlViewModel();
   vm.lastActionMessage = `Final de dobles programada en bloque ${blockId}.`;
-  return publishRealtimeSnapshotAfterMutation_(vm);
+  return publishRealtimeSnapshotAfterStructuralMutation_(vm);
 }
 
 function startDemoTournamentNowFromUi() {
@@ -927,6 +929,12 @@ function publishRealtimeSnapshotAfterMutation_(result, playerIds) {
     publishPlayerRealtimeViewsToFirebase(playerIds);
   }
   return result;
+}
+
+function publishRealtimeSnapshotAfterStructuralMutation_(result, playerIds) {
+  const response = publishRealtimeSnapshotAfterMutation_(result, playerIds);
+  scheduleRealtimePublicSnapshotBurst_();
+  return response;
 }
 
 function normalizeTournamentStartInput_(rawValue) {
