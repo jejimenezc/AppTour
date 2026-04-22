@@ -1,5 +1,6 @@
 <script>
   const PUBLIC_REFRESH_MS = 10000;
+  const PUBLIC_REALTIME_BOOT_TIMEOUT_MS = 3000;
   const MYDAY_REFRESH_MS = 5000;
   const CLIENT_CLOCK_TICK_MS = 1000;
   const LOCAL_STORAGE_PLAYER_KEY = 'ttm_selected_player_id';
@@ -25,6 +26,8 @@
   let publicRefreshTimer = null;
   let publicLoadInFlight = false;
   let publicLastSuccessAt = null;
+  let publicRealtimeSnapshotReceived = false;
+  let publicRealtimeBootstrapTimer = null;
   let currentPublicVm = null;
   let currentMyDayVm = null;
   let currentSinglesGroupsVm = null;
@@ -66,7 +69,7 @@
     initializeControlHeartbeatState();
     initializeAppScreens();
     initializeFirebaseRealtime();
-    loadPublicScreen();
+    startPublicScreenBootstrap_();
     startClientClockTicker();
     loadPlayerSelector();
     loadSinglesGroupsConfig();
@@ -216,6 +219,27 @@
     setRefreshIndicator('Actualización automática activada');
   }
 
+  function startPublicScreenBootstrap_() {
+    clearPublicRealtimeBootstrapTimer_();
+
+    if (!realtimeListenerAttached) {
+      loadPublicScreen();
+      return;
+    }
+
+    setRefreshIndicator('Conectando pantalla publica con Firebase...');
+    publicRealtimeBootstrapTimer = window.setTimeout(function () {
+      if (publicRealtimeSnapshotReceived) return;
+      loadPublicScreen();
+    }, PUBLIC_REALTIME_BOOT_TIMEOUT_MS);
+  }
+
+  function clearPublicRealtimeBootstrapTimer_() {
+    if (!publicRealtimeBootstrapTimer) return;
+    window.clearTimeout(publicRealtimeBootstrapTimer);
+    publicRealtimeBootstrapTimer = null;
+  }
+
   function stopPublicAutoRefresh() {
     if (publicRefreshTimer) {
       window.clearInterval(publicRefreshTimer);
@@ -326,6 +350,8 @@
 
     realtimeMatchesRef = db.ref('partidos');
     realtimeMatchesRef.on('value', function (snapshot) {
+      publicRealtimeSnapshotReceived = true;
+      clearPublicRealtimeBootstrapTimer_();
       lastRealtimePayload = snapshot ? snapshot.val() : null;
       lastRealtimeMatches = normalizeRealtimeMatchesPayload(lastRealtimePayload);
       const realtimeMeta = extractRealtimePublicMeta(lastRealtimePayload);
@@ -334,9 +360,10 @@
         return;
       }
       applyRealtimeMatchesToViews(lastRealtimeMatches);
-      setRefreshIndicator('Sincronizado en tiempo real');
+      setRefreshIndicator(lastRealtimeMatches.length ? 'Sincronizado en tiempo real' : 'Esperando asignación de mesas');
     }, function (error) {
       console.error('Error al escuchar partidos en Firebase.', error);
+      clearPublicRealtimeBootstrapTimer_();
       if (!publicRefreshTimer) {
         startPublicAutoRefresh();
       }
@@ -633,14 +660,15 @@
 
   function renderPublicMatches(vm) {
     const root = document.getElementById('public-screen-content');
+    const emptyMessage = 'Esperando asignación de mesas';
 
     if (!vm.currentBlock) {
-      root.innerHTML = '<div class="empty">No hay bloque activo en este momento.</div>';
+      root.innerHTML = `<div class="empty">${emptyMessage}</div>`;
       return;
     }
 
     if (!vm.matches || vm.matches.length === 0) {
-      root.innerHTML = '<div class="empty">El bloque actual no tiene partidos visibles.</div>';
+      root.innerHTML = `<div class="empty">${emptyMessage}</div>`;
       return;
     }
 
