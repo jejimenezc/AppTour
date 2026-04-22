@@ -1463,7 +1463,7 @@
             <div class="admin-kv-label">Motor procesado</div>
             <div class="admin-code">${escapeHtml(vm.clockLastProcessedInternalTs || '-')}</div>
             <div class="admin-kv-label">Duracion bloque</div>
-            <div class="admin-code">${escapeHtml(vm.timing.totalMinutes || 0)} min (${escapeHtml(vm.timing.playMinutes || 0)} juego / ${escapeHtml(vm.timing.closeMinutes || 0)} cierre / ${escapeHtml(vm.timing.transitionMinutes || 0)} transicion)</div>
+            <div class="admin-code">${escapeHtml(vm.timing.totalMinutes || 0)} min (${escapeHtml(vm.timing.scheduledMinutes || 0)} programado / ${escapeHtml(vm.timing.playMinutes || 0)} juego / ${escapeHtml(vm.timing.closeMinutes || 0)} cierre / ${escapeHtml(vm.timing.transitionMinutes || 0)} transicion)</div>
             <div class="admin-kv-label">App TZ</div>
             <div class="admin-code">${escapeHtml(vm.timeZone && vm.timeZone.appTimeZone || '-')}</div>
             <div class="admin-kv-label">Generado</div>

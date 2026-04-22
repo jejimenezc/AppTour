@@ -738,6 +738,7 @@ function getAdminControlViewModel() {
       finalMatches: matches.filter(match => String(match.result_mode || '') === 'final').length,
     },
     timing: {
+      scheduledMinutes: timing.scheduledMinutes,
       playMinutes: timing.playMinutes,
       closeMinutes: timing.closeMinutes,
       transitionMinutes: timing.transitionMinutes,

@@ -370,14 +370,16 @@ function getTournamentStartDate() {
 /**
  * Lee y valida la configuracion temporal de bloques.
  *
- * @returns {{playMinutes:number, closeMinutes:number, transitionMinutes:number}}
+ * @returns {{scheduledMinutes:number, playMinutes:number, closeMinutes:number, transitionMinutes:number}}
  */
 function getBlockTimingConfig() {
+  const scheduledMinutes = getOptionalNonNegativeBlockMinutesConfig_('block_scheduled_min', 'ventana programada');
   const playMinutes = getPositiveBlockMinutesConfig_('block_play_min', 'duracion de juego');
   const closeMinutes = getPositiveBlockMinutesConfig_('block_close_min', 'ventana de cierre');
   const transitionMinutes = getPositiveBlockMinutesConfig_('block_transition_min', 'ventana de transicion');
 
   return {
+    scheduledMinutes,
     playMinutes,
     closeMinutes,
     transitionMinutes,
@@ -391,7 +393,7 @@ function getBlockTimingConfig() {
  */
 function getBlockTotalMinutes() {
   const timing = getBlockTimingConfig();
-  return timing.playMinutes + timing.closeMinutes + timing.transitionMinutes;
+  return timing.scheduledMinutes + timing.playMinutes + timing.closeMinutes + timing.transitionMinutes;
 }
 
 /**
@@ -410,7 +412,7 @@ function buildBlockWindowFromBase(startBase, offsetMinutes) {
     throw new Error(`Fecha base invalida para construir bloque: ${startBase}`);
   }
 
-  const start = addMinutesToDateTimeText(baseText, offset);
+  const start = addMinutesToDateTimeText(baseText, offset + timing.scheduledMinutes);
   const closeSignal = addMinutesToDateTimeText(start, timing.playMinutes);
   const hardClose = addMinutesToDateTimeText(closeSignal, timing.closeMinutes);
   const end = addMinutesToDateTimeText(hardClose, timing.transitionMinutes);
@@ -436,6 +438,29 @@ function getPositiveBlockMinutesConfig_(key, label) {
 
   if (!Number.isFinite(value) || value <= 0 || Math.floor(value) !== value) {
     throw new Error(`Config.${key} invalido (${raw}). Define un entero positivo para ${label}.`);
+  }
+
+  return value;
+}
+
+/**
+ * Lee una key opcional de minutos y permite 0 como valor valido.
+ * Si la key no existe o esta vacia, usa 0.
+ *
+ * @param {string} key
+ * @param {string} label
+ * @returns {number}
+ */
+function getOptionalNonNegativeBlockMinutesConfig_(key, label) {
+  const raw = getConfigValue(key);
+  if (raw === null || raw === '') {
+    return 0;
+  }
+
+  const value = Number(raw);
+
+  if (!Number.isFinite(value) || value < 0 || Math.floor(value) !== value) {
+    throw new Error(`Config.${key} invalido (${raw}). Define un entero no negativo para ${label}.`);
   }
 
   return value;
