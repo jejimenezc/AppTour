@@ -220,6 +220,43 @@
           <div id="admin-action-feedback" class="helper" style="margin-top: 12px;"></div>
         </div>
 
+        <div class="card-soft" style="margin-bottom: 12px;">
+          <div class="row-between" style="gap: 12px; align-items: center; flex-wrap: wrap;">
+            <div>
+              <div class="stat-label">Modo control heartbeat</div>
+              <div class="helper" id="control-heartbeat-detail" style="margin-top: 6px;">
+                Desactivado. Activalo en este dispositivo para liderar el tick fino del torneo.
+              </div>
+            </div>
+
+            <div class="row-between" style="gap: 10px; flex-wrap: wrap;">
+              <label class="helper" for="control-heartbeat-interval-input">Frecuencia (s)</label>
+              <input
+                id="control-heartbeat-interval-input"
+                class="admin-text-input"
+                type="number"
+                min="3"
+                max="30"
+                step="1"
+                value="5"
+                style="width: 96px;"
+              >
+              <button
+                id="control-heartbeat-toggle-button"
+                class="admin-action-button admin-action-button-secondary"
+                onclick="toggleControlHeartbeatMode()"
+              >
+                Activar modo control
+              </button>
+            </div>
+          </div>
+
+          <div class="control-heartbeat-status" style="margin-top: 14px;">
+            <span id="control-heartbeat-led" class="control-heartbeat-led"></span>
+            <div class="helper" id="control-heartbeat-status">Heartbeat inactivo</div>
+          </div>
+        </div>
+
         <div id="admin-control-content">
           <div class="loading">Cargando panel de control...</div>
         </div>

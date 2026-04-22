@@ -830,6 +830,17 @@ function runTournamentClockNowFromUi() {
   return vm;
 }
 
+function runControlHeartbeatFromUi() {
+  const result = runTournamentClockManualTick();
+  return {
+    ok: !!(result && result.ok),
+    tickResult: result ? result.tickResult || null : null,
+    publishResult: result ? result.publishResult || null : null,
+    clock: buildTournamentClockPayload_(),
+    generatedAt: nowIso(),
+  };
+}
+
 function syncTournamentClockHeartbeatFromUi() {
   return buildTournamentClockPayload_();
 }

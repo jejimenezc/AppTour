@@ -5,6 +5,13 @@
   const LOCAL_STORAGE_PLAYER_KEY = 'ttm_selected_player_id';
   const LOCAL_STORAGE_GROUPS_PLAYER_KEY = 'ttm_groups_selected_player_id';
   const LOCAL_STORAGE_SCREEN_KEY = 'ttm_active_screen';
+  const LOCAL_STORAGE_CONTROL_HEARTBEAT_ENABLED_KEY = 'ttm_control_heartbeat_enabled';
+  const LOCAL_STORAGE_CONTROL_HEARTBEAT_INTERVAL_KEY = 'ttm_control_heartbeat_interval_seconds';
+  const LOCAL_STORAGE_CONTROL_HEARTBEAT_CLIENT_ID_KEY = 'ttm_control_heartbeat_client_id';
+  const CONTROL_HEARTBEAT_DEFAULT_SECONDS = 5;
+  const CONTROL_HEARTBEAT_MIN_SECONDS = 3;
+  const CONTROL_HEARTBEAT_MAX_SECONDS = 30;
+  const CONTROL_HEARTBEAT_LEASE_MS = 15000;
   const FIREBASE_CONFIG = {
     apiKey: 'AIzaSyB1Nrl8x_wJqBzy1uzqLGOdM243h8Dw6Fw',
     authDomain: 'appttour.firebaseapp.com',
@@ -46,8 +53,17 @@
   let lastRealtimePayload = null;
   let lastRealtimeMatches = [];
   let appHeaderClockSnapshot = null;
+  let controlHeartbeatEnabled = false;
+  let controlHeartbeatTimer = null;
+  let controlHeartbeatInFlight = false;
+  let controlHeartbeatClientId = '';
+  let controlHeartbeatLeadership = false;
+  let controlHeartbeatLeaseRef = null;
+  let controlHeartbeatLeaseInfo = null;
+  let controlHeartbeatWakeLock = null;
 
   document.addEventListener('DOMContentLoaded', function () {
+    initializeControlHeartbeatState();
     initializeAppScreens();
     initializeFirebaseRealtime();
     loadPublicScreen();
@@ -56,11 +72,51 @@
     loadSinglesGroupsConfig();
     loadDoublesConfig();
     loadAdminControl();
+    bindControlHeartbeatLifecycle();
   });
 
   function initializeAppScreens() {
     const savedScreen = getSavedAppScreen();
     setActiveAppScreen(savedScreen || 'public');
+  }
+
+  function initializeControlHeartbeatState() {
+    controlHeartbeatEnabled = getStoredControlHeartbeatEnabled_();
+    controlHeartbeatClientId = getOrCreateControlHeartbeatClientId_();
+  }
+
+  function bindControlHeartbeatLifecycle() {
+    const intervalInput = document.getElementById('control-heartbeat-interval-input');
+    if (intervalInput) {
+      intervalInput.addEventListener('change', function () {
+        getControlHeartbeatIntervalSeconds_();
+        if (controlHeartbeatEnabled) {
+          startControlHeartbeatLoopIfNeeded_();
+          runControlHeartbeatCycle_();
+        } else {
+          updateControlHeartbeatUi();
+        }
+      });
+    }
+
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'visible') {
+        if (controlHeartbeatEnabled) {
+          updateControlHeartbeatUi();
+          startControlHeartbeatLoopIfNeeded_();
+          requestControlHeartbeatWakeLock_();
+          runControlHeartbeatCycle_();
+        }
+        return;
+      }
+
+      releaseControlHeartbeatWakeLock_();
+    });
+
+    window.addEventListener('beforeunload', function () {
+      releaseControlHeartbeatLease_();
+      releaseControlHeartbeatWakeLock_();
+    });
   }
 
   function getSavedAppScreen() {
@@ -107,6 +163,7 @@
     if (nextScreen === 'doubles') {
       refreshCurrentPlayerExperience({ silent: true });
     }
+    handleControlHeartbeatScreenChange_();
     window.scrollTo({ top: 0, behavior: 'auto' });
   }
 
@@ -115,6 +172,21 @@
     if (value === 'doubles') return 'myday';
     if (value === 'groups') return 'admin';
     return value || 'public';
+  }
+
+  function handleControlHeartbeatScreenChange_() {
+    if (isAdminScreenActive_()) {
+      updateControlHeartbeatUi();
+      startControlHeartbeatLoopIfNeeded_();
+      return;
+    }
+
+    stopControlHeartbeatLoop_();
+    releaseControlHeartbeatWakeLock_();
+  }
+
+  function isAdminScreenActive_() {
+    return getSavedAppScreen() === 'admin';
   }
 
   function shouldLoadDoublesConfigForCurrentSelection() {
@@ -1434,6 +1506,8 @@
     if (vm.lastActionMessage) {
       setAdminActionFeedback(vm.lastActionMessage);
     }
+
+    updateControlHeartbeatUi();
   }
 
   function renderAdminControlError(error) {
@@ -1596,6 +1670,340 @@
     if (!el) return;
     el.textContent = text || '';
     el.style.color = isError ? '#991b1b' : '';
+  }
+
+  function toggleControlHeartbeatMode() {
+    controlHeartbeatEnabled = !controlHeartbeatEnabled;
+    saveControlHeartbeatEnabled_(controlHeartbeatEnabled);
+
+    if (controlHeartbeatEnabled) {
+      updateControlHeartbeatUi();
+      startControlHeartbeatLoopIfNeeded_();
+      runControlHeartbeatCycle_();
+      return;
+    }
+
+    stopControlHeartbeatLoop_();
+    releaseControlHeartbeatLease_();
+    releaseControlHeartbeatWakeLock_();
+    controlHeartbeatLeadership = false;
+    controlHeartbeatLeaseInfo = null;
+    updateControlHeartbeatUi();
+  }
+
+  function startControlHeartbeatLoopIfNeeded_() {
+    if (!controlHeartbeatEnabled || !isAdminScreenActive_() || document.visibilityState !== 'visible') {
+      return;
+    }
+
+    const intervalMs = getControlHeartbeatIntervalSeconds_() * 1000;
+    const currentInterval = controlHeartbeatTimer && controlHeartbeatTimer.__intervalMs ? controlHeartbeatTimer.__intervalMs : 0;
+    if (controlHeartbeatTimer && currentInterval === intervalMs) {
+      return;
+    }
+
+    stopControlHeartbeatLoop_();
+    controlHeartbeatTimer = window.setInterval(runControlHeartbeatCycle_, intervalMs);
+    controlHeartbeatTimer.__intervalMs = intervalMs;
+    requestControlHeartbeatWakeLock_();
+    updateControlHeartbeatUi();
+  }
+
+  function stopControlHeartbeatLoop_() {
+    if (controlHeartbeatTimer) {
+      window.clearInterval(controlHeartbeatTimer);
+      controlHeartbeatTimer = null;
+    }
+  }
+
+  function runControlHeartbeatCycle_() {
+    if (!controlHeartbeatEnabled || !isAdminScreenActive_() || document.visibilityState !== 'visible' || controlHeartbeatInFlight) {
+      updateControlHeartbeatUi();
+      return;
+    }
+
+    if (!db) {
+      controlHeartbeatLeadership = false;
+      controlHeartbeatLeaseInfo = {
+        status: 'error',
+        detail: 'Firebase no esta disponible para coordinar el dispositivo lider.',
+      };
+      updateControlHeartbeatUi();
+      return;
+    }
+
+    controlHeartbeatInFlight = true;
+    claimOrRenewControlHeartbeatLease_()
+      .then(function (leaseResult) {
+        controlHeartbeatLeadership = !!(leaseResult && leaseResult.isLeader);
+        controlHeartbeatLeaseInfo = leaseResult || null;
+        updateControlHeartbeatUi();
+
+        if (!controlHeartbeatLeadership) {
+          releaseControlHeartbeatWakeLock_();
+          return null;
+        }
+
+        requestControlHeartbeatWakeLock_();
+        return runControlHeartbeatServerTick_();
+      })
+      .catch(function (error) {
+        controlHeartbeatLeadership = false;
+        controlHeartbeatLeaseInfo = {
+          status: 'error',
+          detail: error && error.message ? error.message : String(error || 'Error desconocido'),
+        };
+        updateControlHeartbeatUi();
+        releaseControlHeartbeatWakeLock_();
+      })
+      .finally(function () {
+        controlHeartbeatInFlight = false;
+      });
+  }
+
+  function runControlHeartbeatServerTick_() {
+    return new Promise(function (resolve, reject) {
+      google.script.run
+        .withSuccessHandler(function (result) {
+          if (result && result.clock) {
+            updateAppHeaderClockSnapshot(result.clock);
+          }
+          if (result && result.tickResult && result.tickResult.currentBlockStatus) {
+            controlHeartbeatLeaseInfo = Object.assign({}, controlHeartbeatLeaseInfo || {}, {
+              status: 'active',
+              detail: `Heartbeat activo. Motor en ${result.tickResult.currentBlockStatus || 'sin bloque'} a las ${String(result.generatedAt || '').trim() || 'ahora'}.`,
+            });
+            updateControlHeartbeatUi();
+          }
+          resolve(result || null);
+        })
+        .withFailureHandler(function (error) {
+          reject(error);
+        })
+        .runControlHeartbeatFromUi();
+    });
+  }
+
+  function claimOrRenewControlHeartbeatLease_() {
+    return new Promise(function (resolve, reject) {
+      if (!db) {
+        reject(new Error('Firebase no esta disponible.'));
+        return;
+      }
+
+      if (!controlHeartbeatLeaseRef) {
+        controlHeartbeatLeaseRef = db.ref('system/controlHeartbeatLease');
+      }
+
+      const nowMs = Date.now();
+      const expiresAt = nowMs + CONTROL_HEARTBEAT_LEASE_MS;
+      const payload = {
+        ownerId: controlHeartbeatClientId,
+        ownerLabel: buildControlHeartbeatOwnerLabel_(),
+        intervalSeconds: getControlHeartbeatIntervalSeconds_(),
+        updatedAt: nowMs,
+        expiresAt: expiresAt,
+      };
+
+      controlHeartbeatLeaseRef.transaction(function (current) {
+        const currentOwnerId = current && current.ownerId ? String(current.ownerId) : '';
+        const currentExpiresAt = current && current.expiresAt ? Number(current.expiresAt) : 0;
+        if (currentOwnerId && currentOwnerId !== controlHeartbeatClientId && currentExpiresAt > nowMs) {
+          return;
+        }
+        return payload;
+      }, function (error, committed, snapshot) {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        const value = snapshot && typeof snapshot.val === 'function' ? snapshot.val() : null;
+        const ownerId = value && value.ownerId ? String(value.ownerId) : '';
+        const isLeader = ownerId === controlHeartbeatClientId;
+        const detail = isLeader
+          ? `Lider activo cada ${getControlHeartbeatIntervalSeconds_()} s.`
+          : value && value.ownerLabel
+            ? `Otro dispositivo liderando: ${value.ownerLabel}.`
+            : 'Otro dispositivo esta liderando el heartbeat.';
+
+        resolve({
+          isLeader: isLeader,
+          committed: !!committed,
+          value: value,
+          status: isLeader ? 'active' : 'waiting',
+          detail: detail,
+        });
+      }, false);
+    });
+  }
+
+  function releaseControlHeartbeatLease_() {
+    if (!db) return;
+    const ref = controlHeartbeatLeaseRef || db.ref('system/controlHeartbeatLease');
+    ref.transaction(function (current) {
+      const currentOwnerId = current && current.ownerId ? String(current.ownerId) : '';
+      if (!currentOwnerId || currentOwnerId !== controlHeartbeatClientId) {
+        return;
+      }
+      return null;
+    }, function () {}, false);
+  }
+
+  async function requestControlHeartbeatWakeLock_() {
+    if (!controlHeartbeatEnabled || !controlHeartbeatLeadership || !isAdminScreenActive_() || document.visibilityState !== 'visible') {
+      return;
+    }
+
+    if (!('wakeLock' in navigator) || !navigator.wakeLock || typeof navigator.wakeLock.request !== 'function') {
+      return;
+    }
+
+    if (controlHeartbeatWakeLock) {
+      return;
+    }
+
+    try {
+      controlHeartbeatWakeLock = await navigator.wakeLock.request('screen');
+      if (controlHeartbeatWakeLock && typeof controlHeartbeatWakeLock.addEventListener === 'function') {
+        controlHeartbeatWakeLock.addEventListener('release', function () {
+          controlHeartbeatWakeLock = null;
+          updateControlHeartbeatUi();
+        });
+      }
+      updateControlHeartbeatUi();
+    } catch (error) {
+      controlHeartbeatLeaseInfo = Object.assign({}, controlHeartbeatLeaseInfo || {}, {
+        status: 'waiting',
+        detail: `Heartbeat lider activo, pero no fue posible mantener la pantalla despierta: ${error && error.message ? error.message : String(error)}`,
+      });
+      updateControlHeartbeatUi();
+    }
+  }
+
+  function releaseControlHeartbeatWakeLock_() {
+    if (!controlHeartbeatWakeLock) return;
+    const wakeLock = controlHeartbeatWakeLock;
+    controlHeartbeatWakeLock = null;
+    if (typeof wakeLock.release === 'function') {
+      wakeLock.release().catch(function () {
+        // ignore release errors
+      });
+    }
+    updateControlHeartbeatUi();
+  }
+
+  function updateControlHeartbeatUi() {
+    const toggleButton = document.getElementById('control-heartbeat-toggle-button');
+    const intervalInput = document.getElementById('control-heartbeat-interval-input');
+    const statusEl = document.getElementById('control-heartbeat-status');
+    const detailEl = document.getElementById('control-heartbeat-detail');
+    const ledEl = document.getElementById('control-heartbeat-led');
+    if (!toggleButton || !intervalInput || !statusEl || !detailEl || !ledEl) return;
+
+    intervalInput.value = String(getControlHeartbeatIntervalSeconds_());
+    toggleButton.textContent = controlHeartbeatEnabled ? 'Desactivar modo control' : 'Activar modo control';
+
+    let status = 'off';
+    let detail = 'Desactivado. Activalo en este dispositivo para liderar el tick fino del torneo.';
+
+    if (controlHeartbeatEnabled && !isAdminScreenActive_()) {
+      status = 'waiting';
+      detail = 'Modo preparado. Abre la pantalla de Control para liderar el heartbeat.';
+    } else if (controlHeartbeatEnabled && document.visibilityState !== 'visible') {
+      status = 'waiting';
+      detail = 'Modo preparado. Vuelve a la pestaña visible para retomar liderazgo y wake lock.';
+    } else if (controlHeartbeatEnabled && controlHeartbeatLeadership) {
+      status = 'active';
+      detail = controlHeartbeatLeaseInfo && controlHeartbeatLeaseInfo.detail
+        ? controlHeartbeatLeaseInfo.detail
+        : `Lider activo cada ${getControlHeartbeatIntervalSeconds_()} s.`;
+      if (controlHeartbeatWakeLock) {
+        detail += ' Pantalla despierta.';
+      } else {
+        detail += ' Pantalla despierta no garantizada.';
+      }
+    } else if (controlHeartbeatEnabled && controlHeartbeatLeaseInfo && controlHeartbeatLeaseInfo.status === 'error') {
+      status = 'error';
+      detail = controlHeartbeatLeaseInfo.detail || 'No se pudo ejecutar el heartbeat de control.';
+    } else if (controlHeartbeatEnabled) {
+      status = 'waiting';
+      detail = controlHeartbeatLeaseInfo && controlHeartbeatLeaseInfo.detail
+        ? controlHeartbeatLeaseInfo.detail
+        : 'Buscando liderazgo para ejecutar el heartbeat.';
+    }
+
+    detailEl.textContent = detail;
+    statusEl.textContent = mapControlHeartbeatStatusLabel_(status);
+    ledEl.className = `control-heartbeat-led${status === 'active' ? ' is-active' : ''}${status === 'waiting' ? ' is-waiting' : ''}${status === 'error' ? ' is-error' : ''}`;
+  }
+
+  function mapControlHeartbeatStatusLabel_(status) {
+    if (status === 'active') return 'Heartbeat lider activo';
+    if (status === 'waiting') return 'Heartbeat en espera';
+    if (status === 'error') return 'Heartbeat con error';
+    return 'Heartbeat inactivo';
+  }
+
+  function buildControlHeartbeatOwnerLabel_() {
+    const base = getSavedPlayerId() || 'control';
+    const suffix = String(controlHeartbeatClientId || '').slice(-4);
+    return `${base} · ${suffix}`;
+  }
+
+  function getOrCreateControlHeartbeatClientId_() {
+    try {
+      const existing = window.localStorage.getItem(LOCAL_STORAGE_CONTROL_HEARTBEAT_CLIENT_ID_KEY);
+      if (existing) return existing;
+      const nextValue = `ctrl-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`;
+      window.localStorage.setItem(LOCAL_STORAGE_CONTROL_HEARTBEAT_CLIENT_ID_KEY, nextValue);
+      return nextValue;
+    } catch (error) {
+      return `ctrl-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`;
+    }
+  }
+
+  function getStoredControlHeartbeatEnabled_() {
+    try {
+      return window.localStorage.getItem(LOCAL_STORAGE_CONTROL_HEARTBEAT_ENABLED_KEY) === 'true';
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function saveControlHeartbeatEnabled_(enabled) {
+    try {
+      window.localStorage.setItem(LOCAL_STORAGE_CONTROL_HEARTBEAT_ENABLED_KEY, enabled ? 'true' : 'false');
+    } catch (error) {
+      // ignore storage failures
+    }
+  }
+
+  function getControlHeartbeatIntervalSeconds_() {
+    const input = document.getElementById('control-heartbeat-interval-input');
+    const inputValue = input ? Number(input.value || '') : NaN;
+    const storedValue = getStoredControlHeartbeatIntervalSeconds_();
+    const resolved = Number.isFinite(inputValue) ? inputValue : storedValue;
+    const normalized = Math.min(CONTROL_HEARTBEAT_MAX_SECONDS, Math.max(CONTROL_HEARTBEAT_MIN_SECONDS, Number(resolved || CONTROL_HEARTBEAT_DEFAULT_SECONDS)));
+    saveControlHeartbeatIntervalSeconds_(normalized);
+    return normalized;
+  }
+
+  function getStoredControlHeartbeatIntervalSeconds_() {
+    try {
+      const raw = Number(window.localStorage.getItem(LOCAL_STORAGE_CONTROL_HEARTBEAT_INTERVAL_KEY) || '');
+      return Number.isFinite(raw) ? raw : CONTROL_HEARTBEAT_DEFAULT_SECONDS;
+    } catch (error) {
+      return CONTROL_HEARTBEAT_DEFAULT_SECONDS;
+    }
+  }
+
+  function saveControlHeartbeatIntervalSeconds_(value) {
+    try {
+      window.localStorage.setItem(LOCAL_STORAGE_CONTROL_HEARTBEAT_INTERVAL_KEY, String(value));
+    } catch (error) {
+      // ignore storage failures
+    }
   }
 
   function renderAdminGroupsEntryCard() {
