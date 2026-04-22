@@ -30,6 +30,7 @@ function runTournamentClockTick() {
   return runTournamentClockTickWithOptions_({
     requireEnabled: true,
     auditNote: 'Ultima ejecucion automatica del reloj',
+    publishRealtime: true,
   });
 }
 
@@ -40,17 +41,22 @@ function runTournamentClockManualTick() {
   return runTournamentClockTickWithOptions_({
     requireEnabled: false,
     auditNote: 'Ultima ejecucion manual del reloj',
+    publishRealtime: false,
   });
 }
 
 function runTickAndPublishRealtime() {
-  return runTournamentClockManualTick();
+  return runTournamentClockTickWithOptions_({
+    requireEnabled: false,
+    auditNote: 'Ultima ejecucion manual del reloj',
+    publishRealtime: true,
+  });
 }
 
 /**
  * Nucleo compartido de ejecucion del reloj.
  *
- * @param {{requireEnabled:boolean, auditNote:string}} options
+ * @param {{requireEnabled:boolean, auditNote:string, publishRealtime:boolean}} options
  */
 function runTournamentClockTickWithOptions_(options) {
   const opts = options || {};
@@ -99,7 +105,9 @@ function runTournamentClockTickWithOptions_(options) {
       'Ultimo tiempo interno procesado por el motor'
     );
     setConfigValue('clock_trigger_last_error', '', 'Ultimo error del reloj');
-    const publishResult = publishRealtimeSnapshotToFirebase();
+    const publishResult = opts.publishRealtime === false
+      ? null
+      : publishRealtimeSnapshotToFirebase();
 
     return {
       ok: true,

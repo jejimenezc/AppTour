@@ -827,7 +827,7 @@ function programDoublesTournamentFromUi() {
 function runTournamentClockNowFromUi() {
   runTournamentClockManualTick();
   const vm = getAdminControlViewModel();
-  vm.lastActionMessage = 'Tick ejecutado manualmente.';
+  vm.lastActionMessage = 'Tick silencioso ejecutado manualmente. El motor avanzo sin publicar snapshot publico.';
   return vm;
 }
 
