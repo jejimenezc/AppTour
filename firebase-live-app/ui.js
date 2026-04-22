@@ -870,6 +870,25 @@ function setClockTriggerEnabledFromUi(enabled) {
   return alreadyPublished ? vm : publishRealtimeSnapshotAfterMutation_(vm);
 }
 
+function setAutoTriggerForTestFromUi(enabled) {
+  const nextValue = !!enabled;
+
+  if (nextValue) {
+    const triggerStatus = getTournamentClockTriggerStatus();
+    if (Number(triggerStatus.triggerCount || 0) === 0) {
+      installTournamentClockTrigger();
+    } else {
+      setConfigValue('clock_trigger_enabled', true, 'Habilita el trigger automatico del reloj');
+    }
+  } else {
+    removeTournamentClockTriggers();
+  }
+
+  const vm = getAdminControlViewModel();
+  vm.lastActionMessage = nextValue ? 'Trigger automatico restaurado.' : 'Trigger automatico desactivado.';
+  return publishRealtimeSnapshotAfterMutation_(vm);
+}
+
 function confirmSinglesGroupsFromUi() {
   confirmSinglesGroupsAndStartGroupStage();
   const vm = getAdminControlViewModel();

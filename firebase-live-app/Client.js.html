@@ -189,7 +189,9 @@
   }
 
   function isAdminScreenActive_() {
-    return getSavedAppScreen() === 'admin';
+    if (getSavedAppScreen() === 'admin') return true;
+    const adminPanel = document.querySelector('[data-screen-panel="admin"]');
+    return !!(adminPanel && adminPanel.classList.contains('is-active') && !adminPanel.hidden);
   }
 
   function shouldLoadDoublesConfigForCurrentSelection() {
@@ -1410,6 +1412,7 @@
     }
 
     updateAdminToggleClockButton(vm);
+    updateAdminAutoTriggerButton(vm);
     updateAdminCheckpointButtons(vm);
 
     const currentBlockHtml = vm.currentBlock
@@ -1641,6 +1644,17 @@
     });
   }
 
+  function toggleAutoTriggerForTestFromAdmin() {
+    const triggerCount = Number(currentAdminVm && currentAdminVm.trigger && currentAdminVm.trigger.triggerCount || 0);
+    const nextValue = triggerCount === 0;
+    runAdminAction(nextValue ? 'Restaurando trigger automatico...' : 'Desactivando trigger automatico...', '', function () {
+      google.script.run
+        .withSuccessHandler(handleAdminActionSuccess)
+        .withFailureHandler(handleAdminActionError)
+        .setAutoTriggerForTestFromUi(nextValue);
+    });
+  }
+
   function runAdminAction(loadingText, fallbackSuccessText, executor) {
     if (adminActionInFlight) return;
     adminActionInFlight = true;
@@ -1679,6 +1693,13 @@
     if (!button) return;
     const enabled = !!(vm && vm.clockIsRunning);
     button.textContent = enabled ? 'Pausar cronometro' : 'Iniciar cronometro';
+  }
+
+  function updateAdminAutoTriggerButton(vm) {
+    const button = document.getElementById('admin-toggle-auto-trigger-button');
+    if (!button) return;
+    const triggerCount = Number(vm && vm.trigger && vm.trigger.triggerCount || 0);
+    button.textContent = triggerCount > 0 ? 'Desactivar trigger auto' : 'Restaurar trigger auto';
   }
 
   function updateAdminCheckpointButtons(vm) {
