@@ -5,6 +5,7 @@
   const LOCAL_STORAGE_PLAYER_KEY = 'ttm_selected_player_id';
   const LOCAL_STORAGE_GROUPS_PLAYER_KEY = 'ttm_groups_selected_player_id';
   const LOCAL_STORAGE_SCREEN_KEY = 'ttm_active_screen';
+  const LOCAL_STORAGE_TIME_FAST_PATH_KEY = 'ttm_time_fast_path_v1';
   const LOCAL_STORAGE_CONTROL_HEARTBEAT_ENABLED_KEY = 'ttm_control_heartbeat_enabled';
   const LOCAL_STORAGE_CONTROL_HEARTBEAT_INTERVAL_KEY = 'ttm_control_heartbeat_interval_seconds';
   const LOCAL_STORAGE_CONTROL_HEARTBEAT_CLIENT_ID_KEY = 'ttm_control_heartbeat_client_id';
@@ -68,6 +69,7 @@
   document.addEventListener('DOMContentLoaded', function () {
     initializeControlHeartbeatState();
     initializeAppScreens();
+    restoreHeaderTimeFastPath_();
     initializeFirebaseRealtime();
     startPublicScreenBootstrap_();
     startClientClockTicker();
@@ -209,6 +211,80 @@
       : '';
 
     return actorId !== playerId;
+  }
+
+  function restoreHeaderTimeFastPath_() {
+    const stored = getStoredHeaderTimeFastPath_();
+    if (!stored) return;
+
+    const hydrated = buildHeaderTimeFastPathSnapshot_(stored);
+    if (!hydrated) return;
+
+    updateAppHeaderClockSnapshot(hydrated, { forceResetProjection: true });
+  }
+
+  function getStoredHeaderTimeFastPath_() {
+    try {
+      const raw = window.localStorage.getItem(LOCAL_STORAGE_TIME_FAST_PATH_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function persistHeaderTimeFastPath_(snapshot) {
+    if (!snapshot || !snapshot.usesTimeState) return;
+
+    const payload = {
+      savedAtMs: Date.now(),
+      serverOffsetMs: Number(snapshot.serverOffsetMs || 0),
+      tournamentStartMs: Number(snapshot.tournamentStartMs || 0),
+      tournamentElapsedMs: Number(snapshot.tournamentElapsedMs || 0),
+      timerStatus: String(snapshot.timerStatus || (snapshot.isRunning ? 'running' : 'paused')).trim(),
+      currentPhase: String(snapshot.currentPhase || '').trim(),
+      phaseRemainingMs: Number(snapshot.phaseRemainingMs || 0),
+      phaseSequence: Array.isArray(snapshot.phaseSequence) ? snapshot.phaseSequence.slice() : ['scheduled', 'live', 'closing', 'transition'],
+      phases: snapshot.phases && typeof snapshot.phases === 'object' ? snapshot.phases : {},
+    };
+
+    try {
+      window.localStorage.setItem(LOCAL_STORAGE_TIME_FAST_PATH_KEY, JSON.stringify(payload));
+    } catch (error) {
+      // ignore storage failures
+    }
+  }
+
+  function buildHeaderTimeFastPathSnapshot_(stored) {
+    const tournamentStartMs = Number(stored && stored.tournamentStartMs || 0);
+    if (!tournamentStartMs) return null;
+
+    const savedAtMs = Number(stored && stored.savedAtMs || 0);
+    const nowMs = Date.now();
+    const driftMs = Math.max(0, nowMs - savedAtMs);
+    const baseSnapshot = {
+      isRunning: String(stored && stored.timerStatus || '').trim() === 'running',
+      tournamentElapsedMs: Math.max(0, Number(stored && stored.tournamentElapsedMs || 0)),
+      currentPhase: String(stored && stored.currentPhase || '').trim() || 'scheduled',
+      phaseRemainingMs: Math.max(0, Number(stored && stored.phaseRemainingMs || 0)),
+      phaseSequence: Array.isArray(stored && stored.phaseSequence) ? stored.phaseSequence.slice() : ['scheduled', 'live', 'closing', 'transition'],
+      phases: stored && stored.phases && typeof stored.phases === 'object' ? stored.phases : {},
+    };
+    const projected = projectTimeStatePhase_(baseSnapshot, baseSnapshot.isRunning ? driftMs : 0);
+    const effectiveServerNowMs = nowMs + Number(stored && stored.serverOffsetMs || 0);
+
+    return {
+      serverNowMs: effectiveServerNowMs,
+      tournamentStartMs: tournamentStartMs,
+      tournamentStartTs: formatClockStamp(tournamentStartMs),
+      tournamentElapsedMs: projected.elapsedMs,
+      currentPhase: projected.currentPhase,
+      phaseRemainingMs: projected.phaseRemainingMs,
+      phaseSequence: baseSnapshot.phaseSequence,
+      phases: baseSnapshot.phases,
+      timerStatus: baseSnapshot.isRunning ? 'running' : 'paused',
+    };
   }
 
   function startPublicAutoRefresh() {
@@ -806,6 +882,7 @@
       usesTimeState: normalized.usesTimeState,
       receivedAtMs: receivedAtMs,
     };
+    persistHeaderTimeFastPath_(appHeaderClockSnapshot);
 
     updateAppHeaderClock();
   }
