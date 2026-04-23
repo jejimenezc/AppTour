@@ -289,6 +289,9 @@ function sanitizePublicTimeStateForFirebase_(timeState) {
     currentBlockId: String(source.currentBlockId || '').trim(),
     currentPhase: String(source.currentPhase || '').trim(),
     phaseRemainingMs: Number(source.phaseRemainingMs || 0),
+    phaseSequence: Array.isArray(source.phaseSequence) ? source.phaseSequence.map(function (value) {
+      return String(value || '').trim();
+    }).filter(Boolean) : ['scheduled', 'live', 'closing', 'transition'],
     phases: {
       scheduled: { durationMs: Number(phases.scheduled && phases.scheduled.durationMs || 0) },
       live: { durationMs: Number(phases.live && phases.live.durationMs || 0) },

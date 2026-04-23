@@ -450,8 +450,13 @@
 
   function getIncomingTournamentNowMs_(vm) {
     if (!vm) return 0;
-    const numeric = Number(vm.timeState && vm.timeState.tournamentNowMs || 0);
-    if (numeric) return numeric;
+    const startMs = Number(vm.timeState && vm.timeState.tournamentStartMs || 0) || parseCanonicalDateTime(vm.timeState && vm.timeState.tournamentStartTs);
+    const elapsedMs = Number(vm.timeState && vm.timeState.tournamentElapsedMs || 0);
+    if (startMs && Number.isFinite(elapsedMs)) {
+      return startMs + Math.max(0, elapsedMs);
+    }
+    const fallbackNowMs = Number(vm.timeState && vm.timeState.tournamentNowMs || 0);
+    if (fallbackNowMs) return fallbackNowMs;
     return parseCanonicalDateTime(vm.timeState && vm.timeState.tournamentNowTs);
   }
 
@@ -761,9 +766,7 @@
       return Math.abs(nextPhaseRemainingMs - basePhaseRemainingMs) > 1000;
     }
 
-    const nextTournamentNowMs = Number(nextTimeState.tournamentNowMs || parseCanonicalDateTime(nextTimeState.tournamentNowTs) || 0);
-    const baseTournamentNowMs = Number(baseTimeState.tournamentNowMs || parseCanonicalDateTime(baseTimeState.tournamentNowTs) || 0);
-    return Math.abs(nextTournamentNowMs - baseTournamentNowMs) > 5000;
+    return Math.abs(nextPhaseRemainingMs - basePhaseRemainingMs) > 5000;
   }
 
   function hasMeaningfulHardEventUpdate_(matches, baseVm) {
@@ -892,20 +895,28 @@
 
     if (usesTimeState) {
       const serverNowMs = Number(source.serverNowMs || 0);
-      const tournamentNowMs = Number(source.tournamentNowMs || 0) || parseCanonicalDateTime(source.tournamentNowTs);
       const tournamentStartMs = Number(source.tournamentStartMs || 0) || parseCanonicalDateTime(source.tournamentStartTs);
+      const tournamentElapsedMs = Number(source.tournamentElapsedMs || 0);
+      const fallbackTournamentNowMs = Number(source.tournamentNowMs || 0) || parseCanonicalDateTime(source.tournamentNowTs);
+      const resolvedTournamentNowMs = tournamentStartMs && Number.isFinite(tournamentElapsedMs)
+        ? tournamentStartMs + Math.max(0, tournamentElapsedMs)
+        : fallbackTournamentNowMs;
 
       return {
         usesTimeState: true,
         tournamentStartMs: tournamentStartMs,
-        internalNowMs: tournamentNowMs,
+        internalNowMs: resolvedTournamentNowMs,
         realNowMs: serverNowMs || receivedAtMs,
-        internalNowTs: String(source.tournamentNowTs || '').trim(),
+        internalNowTs: tournamentStartMs && Number.isFinite(tournamentElapsedMs)
+          ? formatClockStamp(tournamentStartMs + Math.max(0, tournamentElapsedMs))
+          : String(source.tournamentNowTs || '').trim(),
         isRunning: String(source.timerStatus || '').trim() === 'running',
         timerStatus: String(source.timerStatus || '').trim(),
         currentPhase: String(source.currentPhase || '').trim(),
         phaseRemainingMs: Number(source.phaseRemainingMs || 0),
+        phaseSequence: Array.isArray(source.phaseSequence) ? source.phaseSequence.slice() : ['scheduled', 'live', 'closing', 'transition'],
         phases: source.phases && typeof source.phases === 'object' ? source.phases : {},
+        tournamentElapsedMs: Math.max(0, tournamentElapsedMs),
         health: 'ok',
         healthMessage: '',
         triggerLastRunAt: '',
@@ -924,7 +935,9 @@
       timerStatus: !!source.isRunning ? 'running' : 'paused',
       currentPhase: '',
       phaseRemainingMs: 0,
+      phaseSequence: ['scheduled', 'live', 'closing', 'transition'],
       phases: {},
+      tournamentElapsedMs: Math.max(0, parseCanonicalDateTime(source.internalNowTs) - parseCanonicalDateTime(source.tournamentStartTs)),
       health: String(source.clockHealth || 'ok'),
       healthMessage: String(source.clockHealthMessage || ''),
       triggerLastRunAt: String(source.triggerLastRunAt || '').trim(),
@@ -946,7 +959,8 @@
     const driftMs = snapshot.isRunning
       ? Math.max(0, effectiveNowMs - (snapshot.realNowMs || referenceReceivedAtMs))
       : 0;
-    const internalNowMs = snapshot.internalNowMs + driftMs;
+    const projectedPhaseState = projectTimeStatePhase_(snapshot, driftMs);
+    const internalNowMs = (snapshot.tournamentStartMs || 0) + projectedPhaseState.elapsedMs;
     const realNowMs = snapshot.usesTimeState
       ? effectiveNowMs
       : (snapshot.realNowMs || referenceReceivedAtMs) + driftMs;
@@ -955,10 +969,65 @@
       internalNowMs: internalNowMs,
       realNowMs: realNowMs,
       internalNowTs: formatClockStamp(internalNowMs),
-      phaseRemainingMs: snapshot.phaseRemainingMs
-        ? Math.max(0, Number(snapshot.phaseRemainingMs || 0) - driftMs)
-        : 0,
+      timerStatus: snapshot.isRunning ? 'running' : 'paused',
+      currentPhase: projectedPhaseState.currentPhase,
+      phaseRemainingMs: projectedPhaseState.phaseRemainingMs,
+      phaseSequence: snapshot.phaseSequence,
+      tournamentElapsedMs: projectedPhaseState.elapsedMs,
     });
+  }
+
+  function projectTimeStatePhase_(snapshot, driftMs) {
+    const phaseOrder = Array.isArray(snapshot && snapshot.phaseSequence) && snapshot.phaseSequence.length
+      ? snapshot.phaseSequence.concat('closed')
+      : ['scheduled', 'live', 'closing', 'transition', 'closed'];
+    const phases = snapshot && snapshot.phases && typeof snapshot.phases === 'object' ? snapshot.phases : {};
+    let currentPhase = String(snapshot && snapshot.currentPhase || '').trim() || 'scheduled';
+    let elapsedMs = Math.max(0, Number(snapshot && snapshot.tournamentElapsedMs || 0));
+    let remainingMs = Math.max(0, Number(snapshot && snapshot.phaseRemainingMs || 0));
+    let remainingDriftMs = Math.max(0, Number(driftMs || 0));
+
+    if (!snapshot || !snapshot.isRunning) {
+      return {
+        currentPhase: currentPhase,
+        phaseRemainingMs: remainingMs,
+        elapsedMs: elapsedMs,
+      };
+    }
+
+    elapsedMs += remainingDriftMs;
+
+    while (remainingDriftMs > 0 && currentPhase && currentPhase !== 'closed') {
+      if (remainingMs > remainingDriftMs) {
+        remainingMs -= remainingDriftMs;
+        remainingDriftMs = 0;
+        break;
+      }
+
+      remainingDriftMs -= remainingMs;
+      const currentPhaseIndex = phaseOrder.indexOf(currentPhase);
+      const nextPhase = currentPhaseIndex >= 0 && currentPhaseIndex < phaseOrder.length - 1
+        ? phaseOrder[currentPhaseIndex + 1]
+        : 'closed';
+
+      currentPhase = nextPhase;
+      if (currentPhase === 'closed') {
+        remainingMs = 0;
+        remainingDriftMs = 0;
+        break;
+      }
+
+      remainingMs = Math.max(0, Number(phases[currentPhase] && phases[currentPhase].durationMs || 0));
+      if (remainingMs === 0) {
+        continue;
+      }
+    }
+
+    return {
+      currentPhase: currentPhase,
+      phaseRemainingMs: remainingMs,
+      elapsedMs: elapsedMs,
+    };
   }
 
   function updateAppHeaderClock() {
@@ -972,11 +1041,11 @@
     }
 
     const internalNowMs = snapshot.internalNowMs;
-    const elapsedSinceStartMs = Math.max(0, internalNowMs - snapshot.tournamentStartMs);
+    const remainingInPhaseMs = Math.max(0, Number(snapshot.phaseRemainingMs || 0));
     const runningLabel = snapshot.isRunning ? 'corriendo' : 'pausado';
     const healthSuffix = snapshot.health && snapshot.health !== 'ok' ? ` | ${snapshot.healthMessage || snapshot.health}` : '';
 
-    root.textContent = `Cronometro del torneo: ${formatElapsedClock(elapsedSinceStartMs)} | Estado: ${runningLabel} | Hora interna: ${formatClockStamp(internalNowMs)}${healthSuffix}`;
+    root.textContent = `Cronometro del torneo: ${formatElapsedClock(remainingInPhaseMs)} | Estado: ${runningLabel} | Hora interna: ${formatClockStamp(internalNowMs)}${healthSuffix}`;
 
     if (currentPublicVm && getSavedAppScreen() === 'public') {
       renderPublicScreenAtClientTime_();
@@ -1164,7 +1233,7 @@
       });
     }
 
-    const expectedBlockStatus = getExpectedBlockStatus(currentBlock, projectedClock.internalNowMs);
+    const expectedBlockStatus = String(projectedClock.currentPhase || '').trim() || getExpectedBlockStatus(currentBlock, projectedClock.internalNowMs);
     currentBlock.visualStatusCode = expectedBlockStatus;
     currentBlock.visualStatusLabel = formatTournamentStateLabel({ status: expectedBlockStatus });
 
@@ -1177,8 +1246,9 @@
       matches: matches,
       timeState: Object.assign({}, baseVm.timeState || {}, {
         currentPhase: expectedBlockStatus,
-        phaseRemainingMs: getProjectedPhaseRemainingMs_(currentBlock, projectedClock.internalNowMs, expectedBlockStatus),
-        tournamentNowMs: projectedClock.internalNowMs,
+        phaseRemainingMs: Number(projectedClock.phaseRemainingMs || 0),
+        phaseSequence: Array.isArray(projectedClock.phaseSequence) ? projectedClock.phaseSequence.slice() : ['scheduled', 'live', 'closing', 'transition'],
+        tournamentElapsedMs: Number(projectedClock.tournamentElapsedMs || 0),
         tournamentNowTs: formatClockStamp(projectedClock.internalNowMs),
         serverNowMs: projectedClock.realNowMs,
         serverNowTs: formatClockStamp(projectedClock.realNowMs),
@@ -1189,21 +1259,6 @@
         realNowTs: formatClockStamp(projectedClock.realNowMs),
       }),
     });
-  }
-
-  function getProjectedPhaseRemainingMs_(currentBlock, internalNowMs, phaseCode) {
-    if (!currentBlock || !internalNowMs || !phaseCode) return 0;
-
-    const startMs = parseCanonicalDateTime(currentBlock.startTs);
-    const closeMs = parseCanonicalDateTime(currentBlock.closeSignalTs);
-    const hardMs = parseCanonicalDateTime(currentBlock.hardCloseTs);
-    const endMs = parseCanonicalDateTime(currentBlock.endTs);
-
-    if (phaseCode === 'scheduled' && startMs) return Math.max(0, startMs - internalNowMs);
-    if (phaseCode === 'live' && closeMs) return Math.max(0, closeMs - internalNowMs);
-    if (phaseCode === 'closing' && hardMs) return Math.max(0, hardMs - internalNowMs);
-    if (phaseCode === 'transition' && endMs) return Math.max(0, endMs - internalNowMs);
-    return 0;
   }
 
   function derivePublicMatchStatus_(match, currentBlock, internalNowMs) {

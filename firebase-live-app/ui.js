@@ -869,6 +869,7 @@ function buildPublicTimeState_(currentBlock) {
     currentBlockId: currentBlock ? String(currentBlock.block_id || '').trim() : '',
     currentPhase: currentPhase,
     phaseRemainingMs: getPublicPhaseRemainingMs_(currentBlock, tournamentNowMs, currentPhase),
+    phaseSequence: ['scheduled', 'live', 'closing', 'transition'],
     phases: buildPublicPhaseMap_(currentBlock),
   };
 }
@@ -876,13 +877,15 @@ function buildPublicTimeState_(currentBlock) {
 function buildPublicPhaseMap_(currentBlock) {
   if (!currentBlock) return {};
 
+  const timing = getBlockTimingConfig();
+
   const startMs = getBlockTimestampMs_(currentBlock.start_ts);
   const closeMs = getBlockTimestampMs_(currentBlock.close_signal_ts);
   const hardMs = getBlockTimestampMs_(currentBlock.hard_close_ts);
   const endMs = getBlockTimestampMs_(currentBlock.end_ts);
 
   return {
-    scheduled: { durationMs: startMs && closeMs ? Math.max(0, closeMs - startMs) : 0 },
+    scheduled: { durationMs: Math.max(0, Number(timing.scheduledMinutes || 0) * 60 * 1000) },
     live: { durationMs: startMs && closeMs ? Math.max(0, closeMs - startMs) : 0 },
     closing: { durationMs: closeMs && hardMs ? Math.max(0, hardMs - closeMs) : 0 },
     transition: { durationMs: hardMs && endMs ? Math.max(0, endMs - hardMs) : 0 },
