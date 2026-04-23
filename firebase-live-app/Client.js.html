@@ -1,5 +1,4 @@
 <script>
-  const PUBLIC_REFRESH_MS = 10000;
   const PUBLIC_REALTIME_BOOT_TIMEOUT_MS = 3000;
   const MYDAY_REFRESH_MS = 5000;
   const CLIENT_CLOCK_TICK_MS = 1000;
@@ -24,7 +23,6 @@
     measurementId: 'G-E1L3YDJEMS',
   };
 
-  let publicRefreshTimer = null;
   let publicLoadInFlight = false;
   let publicLastSuccessAt = null;
   let publicRealtimeSnapshotReceived = false;
@@ -214,18 +212,7 @@
   }
 
   function startPublicAutoRefresh() {
-    stopPublicAutoRefresh();
-
-    if (realtimeListenerAttached) {
-      setRefreshIndicator('Sincronizacion en tiempo real activada');
-      return;
-    }
-
-    publicRefreshTimer = window.setInterval(function () {
-      loadPublicScreen({ silent: true });
-    }, PUBLIC_REFRESH_MS);
-
-    setRefreshIndicator('Actualización automática activada');
+    setRefreshIndicator('Sincronizacion en tiempo real activada');
   }
 
   function startPublicScreenBootstrap_() {
@@ -259,15 +246,10 @@
     if (lastRealtimePayload) {
       applyRealtimeMatchesToViews(lastRealtimeMatches, { preserveGeneratedAt: true });
     }
-
-    loadPublicScreen({ silent: true });
   }
 
   function stopPublicAutoRefresh() {
-    if (publicRefreshTimer) {
-      window.clearInterval(publicRefreshTimer);
-      publicRefreshTimer = null;
-    }
+    return;
   }
 
   function startMyDayAutoRefresh() {
@@ -436,7 +418,7 @@
   function initializeFirebaseRealtime() {
     if (typeof firebase === 'undefined' || !firebase || typeof firebase.initializeApp !== 'function') {
       console.warn('Firebase compat no esta disponible en el cliente.');
-      startPublicAutoRefresh();
+      setRefreshIndicator('Firebase no disponible para pantalla publica');
       startMyDayAutoRefresh();
       return;
     }
@@ -450,7 +432,7 @@
       subscribeRealtimeMatches();
     } catch (error) {
       console.error('No fue posible inicializar Firebase Realtime Database.', error);
-      startPublicAutoRefresh();
+      setRefreshIndicator('Error de conexion realtime');
       startMyDayAutoRefresh();
     }
   }
@@ -474,9 +456,7 @@
     }, function (error) {
       console.error('Error al escuchar partidos en Firebase.', error);
       clearPublicRealtimeBootstrapTimer_();
-      if (!publicRefreshTimer) {
-        startPublicAutoRefresh();
-      }
+      setRefreshIndicator('Error de sincronizacion realtime');
     });
 
     realtimeListenerAttached = true;
@@ -667,7 +647,89 @@
       return false;
     }
     if (!baseVersion) return true;
-    return compareSnapshotVersions_(nextVersion, baseVersion) >= 0;
+    if (compareSnapshotVersions_(nextVersion, baseVersion) > 0) {
+      return true;
+    }
+    if (compareSnapshotVersions_(nextVersion, baseVersion) < 0) {
+      return false;
+    }
+
+    if (hasMeaningfulTimeStateUpdate_(realtimeMeta, baseVm)) {
+      return true;
+    }
+
+    return hasMeaningfulHardEventUpdate_(lastRealtimeMatches, baseVm);
+  }
+
+  function hasMeaningfulTimeStateUpdate_(realtimeMeta, baseVm) {
+    const nextTimeState = realtimeMeta && realtimeMeta.hasTimeState ? realtimeMeta.timeState : null;
+    const baseTimeState = baseVm && baseVm.timeState ? baseVm.timeState : null;
+    if (!nextTimeState) return false;
+    if (!baseTimeState) return true;
+
+    const nextTimerStatus = String(nextTimeState.timerStatus || '').trim();
+    const baseTimerStatus = String(baseTimeState.timerStatus || '').trim();
+    if (nextTimerStatus !== baseTimerStatus) return true;
+
+    const nextPhase = String(nextTimeState.currentPhase || '').trim();
+    const basePhase = String(baseTimeState.currentPhase || '').trim();
+    if (nextPhase !== basePhase) return true;
+
+    const nextBlockId = String(nextTimeState.currentBlockId || '').trim();
+    const baseBlockId = String(baseTimeState.currentBlockId || '').trim();
+    if (nextBlockId !== baseBlockId) return true;
+
+    const nextPhaseRemainingMs = Number(nextTimeState.phaseRemainingMs || 0);
+    const basePhaseRemainingMs = Number(baseTimeState.phaseRemainingMs || 0);
+    if (!nextTimerStatus || nextTimerStatus === 'paused') {
+      return Math.abs(nextPhaseRemainingMs - basePhaseRemainingMs) > 1000;
+    }
+
+    const nextTournamentNowMs = Number(nextTimeState.tournamentNowMs || parseCanonicalDateTime(nextTimeState.tournamentNowTs) || 0);
+    const baseTournamentNowMs = Number(baseTimeState.tournamentNowMs || parseCanonicalDateTime(baseTimeState.tournamentNowTs) || 0);
+    return Math.abs(nextTournamentNowMs - baseTournamentNowMs) > 5000;
+  }
+
+  function hasMeaningfulHardEventUpdate_(matches, baseVm) {
+    const incomingMatches = Array.isArray(matches) ? matches : [];
+    const baseMatches = Array.isArray(baseVm && baseVm.matches) ? baseVm.matches : [];
+    if (!incomingMatches.length) return false;
+    if (!baseMatches.length) return true;
+
+    const baseLookup = {};
+    baseMatches.forEach(function (match) {
+      const matchId = String(match && match.matchId || '').trim();
+      if (!matchId) return;
+      baseLookup[matchId] = match;
+    });
+
+    return incomingMatches.some(function (match) {
+      const matchId = String(match && match.matchId || '').trim();
+      if (!matchId) return false;
+
+      const incomingEventState = normalizePublicEventState_(match && match.eventState);
+      const baseEventState = normalizePublicEventState_(baseLookup[matchId] && baseLookup[matchId].eventState);
+      return !arePublicEventStatesEqual_(incomingEventState, baseEventState);
+    });
+  }
+
+  function normalizePublicEventState_(eventState) {
+    const source = eventState && typeof eventState === 'object' ? eventState : {};
+    return {
+      resultSubmitted: !!source.resultSubmitted,
+      walkover: !!source.walkover,
+      tableBlocked: !!source.tableBlocked,
+      autoClosed: !!source.autoClosed,
+    };
+  }
+
+  function arePublicEventStatesEqual_(left, right) {
+    const a = normalizePublicEventState_(left);
+    const b = normalizePublicEventState_(right);
+    return a.resultSubmitted === b.resultSubmitted &&
+      a.walkover === b.walkover &&
+      a.tableBlocked === b.tableBlocked &&
+      a.autoClosed === b.autoClosed;
   }
 
   function getSnapshotVersion_(value) {
@@ -1101,14 +1163,14 @@
 
   function buildRefreshIndicatorText() {
     if (!publicLastSuccessAt) {
-      return 'Actualización automática activada';
+      return 'Sincronizacion en tiempo real activada';
     }
 
     const hh = String(publicLastSuccessAt.getHours()).padStart(2, '0');
     const mm = String(publicLastSuccessAt.getMinutes()).padStart(2, '0');
     const ss = String(publicLastSuccessAt.getSeconds()).padStart(2, '0');
 
-    return `Actualización automática · última carga ${hh}:${mm}:${ss}`;
+    return `Sincronizacion en tiempo real · ultima carga ${hh}:${mm}:${ss}`;
   }
 
   function loadPlayerSelector() {
