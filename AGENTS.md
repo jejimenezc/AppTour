@@ -131,9 +131,20 @@ Marco institucionalizado:
 
 - la estructura del bloque y el estado del tiempo son contratos distintos
 - el cliente anima el segundero
-- el servidor entrega la referencia de tiempo y audita desfaces
+- el servidor entrega la referencia de tiempo y audita desfases
 - `snapshotVersion` sirve para frescura estructural
-- `serverTimeOffset` y/o `serverNow` sirven para alinear el reloj efectivo del cliente
+- `serverNow` es el ancla fresca del contrato de tiempo
+- el cliente calcula `offset = serverNowMs - Date.now()`
+- el cliente calcula `effectiveNow = Date.now() + offset`
+
+Regla operativa ya validada en Publica:
+
+- si `timerStatus === "running"`, el cliente proyecta el acumulado desde:
+  - `baseElapsedMs + (effectiveNowMs - serverNowMs)`
+- si `timerStatus === "paused"`, el cliente conserva `baseElapsedMs`
+- el cronometro visible debe renderizarse como:
+  - `internalNowMs - tournamentStartMs`
+- no debe renderizarse como countdown de fase
 
 ## Contrato de Estado de Tiempo
 
@@ -155,10 +166,12 @@ El servidor publica:
 
 - `timerStatus`
 - `serverNow`
-- `serverTimeOffset` o la informacion suficiente para calcularlo
 - `currentBlock`
 - `currentPhase`
 - `phaseRemainingMs`
+- `tournamentStartMs`
+- `tournamentElapsedMs`
+- `pausedAccumulatedMs`
 - `phases` o el mapa equivalente de duraciones y orden
 
 El cliente calcula:
@@ -171,7 +184,8 @@ El cliente calcula:
 
 Si `timerStatus === "running"`:
 
-- el cliente descuenta localmente el tiempo restante
+- el cliente proyecta localmente el tiempo acumulado del torneo
+- el cliente descuenta localmente el tiempo restante de fase
 - si la fase llega a cero, avanza visualmente a la siguiente fase del bloque
 
 Si `timerStatus === "paused"`:
@@ -204,6 +218,20 @@ Para Pantalla Publica:
 - el bloque es una secuencia ordenada de fases
 - la App calcula visualmente `scheduled/live/closing/transition/closed`
 - el JSON no debe transportar esos estados temporales resueltos
+
+### Estado actual
+
+La Pantalla Publica ya quedo estabilizada bajo este contrato.
+
+Eso incluye:
+
+- cronometro lineal sincronizado entre pantallas y dispositivos
+- `start/pause/resume` funcionando sobre `timeState`
+- transiciones de bloque/fase calculadas localmente
+- header y render publico consumiendo la misma proyeccion temporal
+- handoff estructural manteniendo el bloque como frontera de publicacion
+
+Por lo tanto, este contrato deja de ser solo una direccion futura y pasa a ser referencia operativa para las siguientes pantallas.
 
 ## Regla del nodo publico
 

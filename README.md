@@ -142,23 +142,26 @@ Bajo el nuevo marco mental:
 
 ### Contrato de Estado de Tiempo
 
-Este contrato pasa a ser la base de la nueva Publica.
+Este contrato ya es la base operativa de la Pantalla Publica.
 
 La idea es separar:
 
 - `snapshot estructural`
 - `estado de tiempo`
 
-#### Elementos esperados
+#### Elementos del contrato
 
-El servidor debe exponer, directa o indirectamente:
+El servidor expone, directa o indirectamente:
 
 - `timerStatus`
 - `serverNow`
-- `serverTimeOffset` o datos para calcularlo
 - `currentBlock`
 - `currentPhase`
 - `phaseRemainingMs`
+- `tournamentStartMs`
+- `tournamentElapsedMs`
+- `pausedAccumulatedMs`
+- `phaseSequence`
 - `phases`
 
 Ejemplo conceptual:
@@ -187,14 +190,29 @@ El cliente calcula:
 - `offset = serverNow - Date.now()`
 - `effectiveNow = Date.now() + offset`
 
+Y proyecta el acumulado del torneo como:
+
+```js
+const baseElapsedMs = Number(timeState.tournamentElapsedMs || 0);
+
+const projectedTournamentElapsedMs =
+  timeState.timerStatus === 'running'
+    ? baseElapsedMs + Math.max(0, effectiveNowMs - timeState.serverNowMs)
+    : baseElapsedMs;
+
+const projectedInternalNowMs =
+  timeState.tournamentStartMs + projectedTournamentElapsedMs;
+```
+
 Si `timerStatus === "running"`:
 
-- proyecta el final de la fase actual
-- descuenta localmente
+- proyecta el acumulado del torneo
+- descuenta localmente la fase actual
 - cambia visualmente de fase cuando el tiempo llega a cero
 
 Si `timerStatus === "paused"`:
 
+- conserva `tournamentElapsedMs`
 - muestra `phaseRemainingMs` congelado
 
 #### Regla del servidor
@@ -204,6 +222,12 @@ El servidor actua como auditor:
 - verifica periodicamente en que fase deberia estar el torneo
 - corrige si el desface supera un umbral
 - publica estructura nueva solo cuando cambia algo estructural
+
+Al pausar:
+
+- el servidor debe capturar el `tournamentElapsedMs` exacto del reloj maestro
+- el cliente no recalcula la pausa como resta historica
+- el siguiente `timeState` se toma como ancla fresca
 
 #### Umbral de resincronizacion
 
@@ -240,24 +264,32 @@ El publish publico ocurre cuando hace falta, por ejemplo:
 
 ## Estado actual de Pantalla Publica
 
-La Publica ya esta a medio camino en el cambio de paradigma.
+La Pantalla Publica quedo estabilizada bajo el nuevo contrato.
 
-Ya existe:
+Capacidades ya validadas:
 
-- reloj proyectado en cliente
+- cronometro lineal sincronizado entre desktop y movil
+- `start/pause/resume` sobre `timeState`
+- transiciones locales de bloque/fase segun hitos temporales
 - handoff estructural entre bloques
-- resync al volver a foco
-- monotonicidad basica de snapshots
-- empty state amable
+- uso de `serverNow` como ancla fresca del reloj
+- timezone semantica alineada entre servidor y cliente
+- fast-path local para reducir el costo visible del refresh
 
-Problema aun abierto:
+Reglas de implementacion que ya quedaron funcionando:
 
-- la Publica todavia necesita consolidarse sobre un Contrato de Estado de Tiempo explicito
-- el reloj y el bloque deben pasar a derivarse desde tiempo efectivo + fases, no desde estados temporales serializados
+- el header usa `timeState`, no `clock` legacy
+- el cronometro visible se renderiza como:
+  - `internalNowMs - tournamentStartMs`
+- la hora interna proyectada se calcula desde:
+  - `tournamentStartMs + projectedTournamentElapsedMs`
+- el cliente acepta cambios de `timerStatus` como actualizaciones prioritarias
+- la Publica ya no depende de auto-refresh por GAS durante la vida normal del bloque
 
-Direccion inmediata:
+Consecuencia:
 
-- rehacer la Publica sobre el Contrato de Estado de Tiempo
+- la primera pantalla ya quedo migrada al enfoque `screen-first`
+- las siguientes pantallas deben tomar esta implementacion como referencia, no el modelo hibrido anterior
 - dejar que derive estados temporales solo desde tiempos y fases
 - dejar los estados duros como datos de evento en Firebase
 
