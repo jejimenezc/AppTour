@@ -55,6 +55,25 @@ function publishPartidosSnapshotToFirebase() {
   };
 }
 
+function publishPublicTimeStateToFirebase() {
+  const currentBlock = getCurrentBlock();
+  const timeState = buildPublicTimeState_(currentBlock);
+  const partidosTimeStateResponse = writeFirebaseNode_('partidos/timeState', sanitizePublicTimeStateForFirebase_(timeState));
+  const systemTimeStateResponse = writeFirebaseNode_('system/timeState', sanitizePublicTimeStateForFirebase_(timeState));
+
+  return {
+    ok: true,
+    timerStatus: String(timeState.timerStatus || '').trim(),
+    currentPhase: String(timeState.currentPhase || '').trim(),
+    tournamentNowTs: String(timeState.tournamentNowTs || '').trim(),
+    currentBlockId: String(timeState.currentBlockId || '').trim(),
+    statusCodes: {
+      partidosTimeState: partidosTimeStateResponse.statusCode,
+      systemTimeState: systemTimeStateResponse.statusCode,
+    },
+  };
+}
+
 function buildRealtimeSnapshotPayload_() {
   const publicVm = getPublicViewModel();
   const generatedAt = String(publicVm.generatedAt || nowIso()).trim();
@@ -231,6 +250,7 @@ function buildPartidosFirebasePayload_(publicVm) {
   return {
     tournamentStatus: String(vm.tournamentStatus || '').trim(),
     currentBlock: sanitizePublicCurrentBlockForFirebase_(vm.currentBlock),
+    timeState: sanitizePublicTimeStateForFirebase_(vm.timeState),
     clock: vm.clock || null,
     generatedAt: String(vm.generatedAt || '').trim(),
     snapshotVersion: String(vm.snapshotVersion || vm.generatedAt || '').trim(),
@@ -250,6 +270,31 @@ function buildPartidosFirebasePayload_(publicVm) {
         setsB: match && Object.prototype.hasOwnProperty.call(match, 'setsB') ? match.setsB : '',
       };
     }),
+  };
+}
+
+function sanitizePublicTimeStateForFirebase_(timeState) {
+  const source = timeState && typeof timeState === 'object' ? timeState : {};
+  const phases = source.phases && typeof source.phases === 'object' ? source.phases : {};
+
+  return {
+    timerStatus: String(source.timerStatus || '').trim(),
+    serverNowTs: String(source.serverNowTs || '').trim(),
+    serverNowMs: Number(source.serverNowMs || 0),
+    tournamentStartTs: String(source.tournamentStartTs || '').trim(),
+    tournamentStartMs: Number(source.tournamentStartMs || 0),
+    tournamentNowTs: String(source.tournamentNowTs || '').trim(),
+    tournamentNowMs: Number(source.tournamentNowMs || 0),
+    tournamentElapsedMs: Number(source.tournamentElapsedMs || 0),
+    currentBlockId: String(source.currentBlockId || '').trim(),
+    currentPhase: String(source.currentPhase || '').trim(),
+    phaseRemainingMs: Number(source.phaseRemainingMs || 0),
+    phases: {
+      scheduled: { durationMs: Number(phases.scheduled && phases.scheduled.durationMs || 0) },
+      live: { durationMs: Number(phases.live && phases.live.durationMs || 0) },
+      closing: { durationMs: Number(phases.closing && phases.closing.durationMs || 0) },
+      transition: { durationMs: Number(phases.transition && phases.transition.durationMs || 0) },
+    },
   };
 }
 

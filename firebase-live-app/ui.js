@@ -33,6 +33,7 @@ function getPublicViewModel() {
   return {
     tournamentStatus: status,
     clock: buildTournamentClockPayload_(),
+    timeState: buildPublicTimeState_(currentBlock),
     currentBlock: currentBlock
       ? {
           id: currentBlock.block_id,
@@ -841,6 +842,85 @@ function runControlHeartbeatFromUi() {
   };
 }
 
+function buildPublicTimeState_(currentBlock) {
+  const clockState = getTournamentClockState_();
+  const serverNowTs = normalizeDateTimeText(clockState.realNowTs || nowIso());
+  const tournamentStartTs = normalizeDateTimeText(clockState.startTs);
+  const tournamentNowTs = normalizeDateTimeText(clockState.internalNowTs);
+  const serverNowDate = parseBlockDate(serverNowTs);
+  const tournamentNowDate = parseBlockDate(tournamentNowTs);
+  const tournamentStartDate = parseBlockDate(tournamentStartTs);
+  const tournamentNowMs = tournamentNowDate ? tournamentNowDate.getTime() : 0;
+  const currentPhase = getPublicCurrentPhaseCode_(currentBlock, tournamentNowMs);
+
+  return {
+    timerStatus: clockState.isRunning ? 'running' : 'paused',
+    serverNowTs: serverNowTs,
+    serverNowMs: serverNowDate ? serverNowDate.getTime() : 0,
+    tournamentStartTs: tournamentStartTs,
+    tournamentStartMs: tournamentStartDate ? tournamentStartDate.getTime() : 0,
+    tournamentNowTs: tournamentNowTs,
+    tournamentNowMs: tournamentNowMs,
+    tournamentElapsedMs: Number(clockState.elapsedMs || 0),
+    currentBlockId: currentBlock ? String(currentBlock.block_id || '').trim() : '',
+    currentPhase: currentPhase,
+    phaseRemainingMs: getPublicPhaseRemainingMs_(currentBlock, tournamentNowMs, currentPhase),
+    phases: buildPublicPhaseMap_(currentBlock),
+  };
+}
+
+function buildPublicPhaseMap_(currentBlock) {
+  if (!currentBlock) return {};
+
+  const startMs = getBlockTimestampMs_(currentBlock.start_ts);
+  const closeMs = getBlockTimestampMs_(currentBlock.close_signal_ts);
+  const hardMs = getBlockTimestampMs_(currentBlock.hard_close_ts);
+  const endMs = getBlockTimestampMs_(currentBlock.end_ts);
+
+  return {
+    scheduled: { durationMs: startMs && closeMs ? Math.max(0, closeMs - startMs) : 0 },
+    live: { durationMs: startMs && closeMs ? Math.max(0, closeMs - startMs) : 0 },
+    closing: { durationMs: closeMs && hardMs ? Math.max(0, hardMs - closeMs) : 0 },
+    transition: { durationMs: hardMs && endMs ? Math.max(0, endMs - hardMs) : 0 },
+  };
+}
+
+function getPublicCurrentPhaseCode_(currentBlock, tournamentNowMs) {
+  if (!currentBlock || !tournamentNowMs) return '';
+
+  const startMs = getBlockTimestampMs_(currentBlock.start_ts);
+  const closeMs = getBlockTimestampMs_(currentBlock.close_signal_ts);
+  const hardMs = getBlockTimestampMs_(currentBlock.hard_close_ts);
+  const endMs = getBlockTimestampMs_(currentBlock.end_ts);
+
+  if (!startMs || tournamentNowMs < startMs) return 'scheduled';
+  if (closeMs && tournamentNowMs < closeMs) return 'live';
+  if (hardMs && tournamentNowMs < hardMs) return 'closing';
+  if (endMs && tournamentNowMs < endMs) return 'transition';
+  if (endMs && tournamentNowMs >= endMs) return 'closed';
+  return '';
+}
+
+function getPublicPhaseRemainingMs_(currentBlock, tournamentNowMs, phaseCode) {
+  if (!currentBlock || !tournamentNowMs || !phaseCode) return 0;
+
+  const startMs = getBlockTimestampMs_(currentBlock.start_ts);
+  const closeMs = getBlockTimestampMs_(currentBlock.close_signal_ts);
+  const hardMs = getBlockTimestampMs_(currentBlock.hard_close_ts);
+  const endMs = getBlockTimestampMs_(currentBlock.end_ts);
+
+  if (phaseCode === 'scheduled' && startMs) return Math.max(0, startMs - tournamentNowMs);
+  if (phaseCode === 'live' && closeMs) return Math.max(0, closeMs - tournamentNowMs);
+  if (phaseCode === 'closing' && hardMs) return Math.max(0, hardMs - tournamentNowMs);
+  if (phaseCode === 'transition' && endMs) return Math.max(0, endMs - tournamentNowMs);
+  return 0;
+}
+
+function getBlockTimestampMs_(value) {
+  const parsed = parseBlockDate(value);
+  return parsed ? parsed.getTime() : 0;
+}
+
 function syncTournamentClockHeartbeatFromUi() {
   return buildTournamentClockPayload_();
 }
@@ -856,9 +936,10 @@ function setClockTriggerEnabledFromUi(enabled) {
 
   const vm = getAdminControlViewModel();
   vm.lastActionMessage = nextValue
-    ? 'Cronometro iniciado. El reloj logico ya corre y se publico el snapshot actualizado.'
-    : 'Cronometro pausado. El reloj logico queda congelado y se publico el snapshot actualizado.';
-  return publishRealtimeSnapshotAfterMutation_(vm);
+    ? 'Cronometro iniciado. El reloj logico ya corre y se publico el estado de tiempo.'
+    : 'Cronometro pausado. El reloj logico queda congelado y se publico el estado de tiempo.';
+  publishPublicTimeStateToFirebase();
+  return vm;
 }
 
 function setAutoTriggerForTestFromUi(enabled) {

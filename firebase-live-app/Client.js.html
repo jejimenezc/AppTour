@@ -354,7 +354,7 @@
     currentPublicVm = vm;
     rememberPublicSnapshotVersion_(vm);
     if (shouldAcceptIncomingClockBase_(vm, didBlockChange)) {
-      updateAppHeaderClockSnapshot(vm && vm.clock ? vm.clock : null, {
+      updateAppHeaderClockSnapshot(selectPublicTimeReference_(vm), {
         forceResetProjection: didBlockChange,
       });
     }
@@ -363,9 +363,9 @@
 
   function shouldAcceptIncomingClockBase_(vm, didBlockChange) {
     if (didBlockChange) return true;
-    if (!vm || !vm.clock) return false;
+    if (!vm || !vm.timeState) return false;
 
-    const incomingInternalNowMs = parseCanonicalDateTime(vm.clock.internalNowTs);
+    const incomingInternalNowMs = getIncomingTournamentNowMs_(vm);
     const projectedSnapshot = getProjectedClockSnapshot_();
     if (!incomingInternalNowMs || !projectedSnapshot || !projectedSnapshot.internalNowMs) {
       return true;
@@ -383,6 +383,18 @@
     }
 
     return projectedSnapshot.internalNowMs - incomingInternalNowMs <= 1000;
+  }
+
+  function selectPublicTimeReference_(vm) {
+    if (!vm) return null;
+    return vm.timeState || null;
+  }
+
+  function getIncomingTournamentNowMs_(vm) {
+    if (!vm) return 0;
+    const numeric = Number(vm.timeState && vm.timeState.tournamentNowMs || 0);
+    if (numeric) return numeric;
+    return parseCanonicalDateTime(vm.timeState && vm.timeState.tournamentNowTs);
   }
 
   function renderPublicScreenAtClientTime_() {
@@ -412,7 +424,9 @@
     if (!root) return;
 
     const snapshotVersion = getSnapshotVersion_(vm && (vm.snapshotVersion || vm.generatedAt)) || '-';
-    const internalNowTs = vm && vm.clock ? String(vm.clock.internalNowTs || '').trim() : '';
+    const internalNowTs = vm && vm.timeState
+      ? String(vm.timeState.tournamentNowTs || '').trim()
+      : '';
     const blockStatus = vm && vm.currentBlock ? String(vm.currentBlock.visualStatusCode || '').trim() : '';
     const generatedAt = vm ? String(vm.generatedAt || '').trim() : '';
 
@@ -594,6 +608,7 @@
     return {
       tournamentStatus: realtimeMeta.tournamentStatus || baseVm.tournamentStatus || 'live',
       currentBlock: realtimeMeta.hasCurrentBlock ? realtimeMeta.currentBlock : (baseVm.currentBlock || null),
+      timeState: realtimeMeta.hasTimeState ? realtimeMeta.timeState : (baseVm.timeState || null),
       clock: realtimeMeta.hasClock ? realtimeMeta.clock : (baseVm.clock || null),
       matches: matches,
       generatedAt: generatedAt,
@@ -606,6 +621,7 @@
       return {
         tournamentStatus: '',
         currentBlock: null,
+        timeState: null,
         generatedAt: '',
         snapshotVersion: '',
       };
@@ -619,6 +635,8 @@
       tournamentStatus: String(source.tournamentStatus || '').trim(),
       currentBlock: Object.prototype.hasOwnProperty.call(source, 'currentBlock') ? source.currentBlock : null,
       hasCurrentBlock: Object.prototype.hasOwnProperty.call(source, 'currentBlock'),
+      timeState: Object.prototype.hasOwnProperty.call(source, 'timeState') ? source.timeState : null,
+      hasTimeState: Object.prototype.hasOwnProperty.call(source, 'timeState'),
       generatedAt: String(source.generatedAt || '').trim(),
       snapshotVersion: String(source.snapshotVersion || source.generatedAt || '').trim(),
       clock: Object.prototype.hasOwnProperty.call(source, 'clock') ? source.clock : null,
@@ -692,9 +710,10 @@
     const opts = options || {};
     const receivedAtMs = Date.now();
     const previousProjectedSnapshot = opts.forceResetProjection ? null : getProjectedClockSnapshot_();
-    let nextInternalNowMs = parseCanonicalDateTime(clock.internalNowTs);
-    let nextRealNowMs = parseCanonicalDateTime(clock.realNowTs);
-    const nextIsRunning = !!clock.isRunning;
+    const normalized = normalizeTimeReferenceSnapshot_(clock, receivedAtMs);
+    let nextInternalNowMs = normalized.internalNowMs;
+    let nextRealNowMs = normalized.realNowMs;
+    const nextIsRunning = !!normalized.isRunning;
 
     if (
       previousProjectedSnapshot &&
@@ -708,18 +727,71 @@
     }
 
     appHeaderClockSnapshot = {
-      tournamentStartMs: parseCanonicalDateTime(clock.tournamentStartTs),
+      tournamentStartMs: normalized.tournamentStartMs,
       internalNowMs: nextInternalNowMs,
       realNowMs: nextRealNowMs,
-      internalNowTs: String(clock.internalNowTs || '').trim(),
+      internalNowTs: normalized.internalNowTs,
       isRunning: nextIsRunning,
-      health: String(clock.clockHealth || 'ok'),
-      healthMessage: String(clock.clockHealthMessage || ''),
-      triggerLastRunAt: String(clock.triggerLastRunAt || '').trim(),
+      health: normalized.health,
+      healthMessage: normalized.healthMessage,
+      triggerLastRunAt: normalized.triggerLastRunAt,
+      timerStatus: normalized.timerStatus,
+      currentPhase: normalized.currentPhase,
+      phaseRemainingMs: normalized.phaseRemainingMs,
+      phases: normalized.phases,
+      serverNowMs: normalized.serverNowMs,
+      serverOffsetMs: normalized.serverOffsetMs,
+      usesTimeState: normalized.usesTimeState,
       receivedAtMs: receivedAtMs,
     };
 
     updateAppHeaderClock();
+  }
+
+  function normalizeTimeReferenceSnapshot_(source, receivedAtMs) {
+    const usesTimeState = !!(source && Object.prototype.hasOwnProperty.call(source, 'serverNowMs'));
+
+    if (usesTimeState) {
+      const serverNowMs = Number(source.serverNowMs || 0);
+      const tournamentNowMs = Number(source.tournamentNowMs || 0) || parseCanonicalDateTime(source.tournamentNowTs);
+      const tournamentStartMs = Number(source.tournamentStartMs || 0) || parseCanonicalDateTime(source.tournamentStartTs);
+
+      return {
+        usesTimeState: true,
+        tournamentStartMs: tournamentStartMs,
+        internalNowMs: tournamentNowMs,
+        realNowMs: serverNowMs || receivedAtMs,
+        internalNowTs: String(source.tournamentNowTs || '').trim(),
+        isRunning: String(source.timerStatus || '').trim() === 'running',
+        timerStatus: String(source.timerStatus || '').trim(),
+        currentPhase: String(source.currentPhase || '').trim(),
+        phaseRemainingMs: Number(source.phaseRemainingMs || 0),
+        phases: source.phases && typeof source.phases === 'object' ? source.phases : {},
+        health: 'ok',
+        healthMessage: '',
+        triggerLastRunAt: '',
+        serverNowMs: serverNowMs || receivedAtMs,
+        serverOffsetMs: (serverNowMs || receivedAtMs) - receivedAtMs,
+      };
+    }
+
+    return {
+      usesTimeState: false,
+      tournamentStartMs: parseCanonicalDateTime(source.tournamentStartTs),
+      internalNowMs: parseCanonicalDateTime(source.internalNowTs),
+      realNowMs: parseCanonicalDateTime(source.realNowTs),
+      internalNowTs: String(source.internalNowTs || '').trim(),
+      isRunning: !!source.isRunning,
+      timerStatus: !!source.isRunning ? 'running' : 'paused',
+      currentPhase: '',
+      phaseRemainingMs: 0,
+      phases: {},
+      health: String(source.clockHealth || 'ok'),
+      healthMessage: String(source.clockHealthMessage || ''),
+      triggerLastRunAt: String(source.triggerLastRunAt || '').trim(),
+      serverNowMs: parseCanonicalDateTime(source.realNowTs),
+      serverOffsetMs: 0,
+    };
   }
 
   function getProjectedClockSnapshot_() {
@@ -729,16 +801,24 @@
     }
 
     const referenceReceivedAtMs = snapshot.receivedAtMs || Date.now();
+    const effectiveNowMs = snapshot.usesTimeState
+      ? Date.now() + Number(snapshot.serverOffsetMs || 0)
+      : Date.now();
     const driftMs = snapshot.isRunning
-      ? Math.max(0, Date.now() - referenceReceivedAtMs)
+      ? Math.max(0, effectiveNowMs - (snapshot.realNowMs || referenceReceivedAtMs))
       : 0;
     const internalNowMs = snapshot.internalNowMs + driftMs;
-    const realNowMs = (snapshot.realNowMs || referenceReceivedAtMs) + driftMs;
+    const realNowMs = snapshot.usesTimeState
+      ? effectiveNowMs
+      : (snapshot.realNowMs || referenceReceivedAtMs) + driftMs;
 
     return Object.assign({}, snapshot, {
       internalNowMs: internalNowMs,
       realNowMs: realNowMs,
       internalNowTs: formatClockStamp(internalNowMs),
+      phaseRemainingMs: snapshot.phaseRemainingMs
+        ? Math.max(0, Number(snapshot.phaseRemainingMs || 0) - driftMs)
+        : 0,
     });
   }
 
@@ -956,11 +1036,35 @@
     return Object.assign({}, baseVm, {
       currentBlock: currentBlock,
       matches: matches,
+      timeState: Object.assign({}, baseVm.timeState || {}, {
+        currentPhase: expectedBlockStatus,
+        phaseRemainingMs: getProjectedPhaseRemainingMs_(currentBlock, projectedClock.internalNowMs, expectedBlockStatus),
+        tournamentNowMs: projectedClock.internalNowMs,
+        tournamentNowTs: formatClockStamp(projectedClock.internalNowMs),
+        serverNowMs: projectedClock.realNowMs,
+        serverNowTs: formatClockStamp(projectedClock.realNowMs),
+        timerStatus: projectedClock.isRunning ? 'running' : 'paused',
+      }),
       clock: Object.assign({}, baseVm.clock || {}, {
         internalNowTs: formatClockStamp(projectedClock.internalNowMs),
         realNowTs: formatClockStamp(projectedClock.realNowMs),
       }),
     });
+  }
+
+  function getProjectedPhaseRemainingMs_(currentBlock, internalNowMs, phaseCode) {
+    if (!currentBlock || !internalNowMs || !phaseCode) return 0;
+
+    const startMs = parseCanonicalDateTime(currentBlock.startTs);
+    const closeMs = parseCanonicalDateTime(currentBlock.closeSignalTs);
+    const hardMs = parseCanonicalDateTime(currentBlock.hardCloseTs);
+    const endMs = parseCanonicalDateTime(currentBlock.endTs);
+
+    if (phaseCode === 'scheduled' && startMs) return Math.max(0, startMs - internalNowMs);
+    if (phaseCode === 'live' && closeMs) return Math.max(0, closeMs - internalNowMs);
+    if (phaseCode === 'closing' && hardMs) return Math.max(0, hardMs - internalNowMs);
+    if (phaseCode === 'transition' && endMs) return Math.max(0, endMs - internalNowMs);
+    return 0;
   }
 
   function derivePublicMatchStatus_(match, currentBlock, internalNowMs) {
