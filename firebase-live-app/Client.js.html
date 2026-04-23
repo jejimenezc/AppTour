@@ -3523,14 +3523,14 @@
     const match = text.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/);
     if (!match) return 0;
 
-    return new Date(
+    return Date.UTC(
       Number(match[1]),
       Number(match[2]) - 1,
       Number(match[3]),
       Number(match[4]),
       Number(match[5]),
       Number(match[6])
-    ).getTime();
+    );
   }
 
   function formatElapsedClock(milliseconds) {
@@ -3561,9 +3561,9 @@
 
     const date = new Date(milliseconds);
     return [
-      String(date.getHours()).padStart(2, '0'),
-      String(date.getMinutes()).padStart(2, '0'),
-      String(date.getSeconds()).padStart(2, '0'),
+      String(date.getUTCHours()).padStart(2, '0'),
+      String(date.getUTCMinutes()).padStart(2, '0'),
+      String(date.getUTCSeconds()).padStart(2, '0'),
     ].join(':');
   }
 
@@ -3571,9 +3571,9 @@
     if (!milliseconds) return '--';
 
     const date = new Date(milliseconds);
-    const yyyy = String(date.getFullYear());
-    const mm = String(date.getMonth() + 1).padStart(2, '0');
-    const dd = String(date.getDate()).padStart(2, '0');
+    const yyyy = String(date.getUTCFullYear());
+    const mm = String(date.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(date.getUTCDate()).padStart(2, '0');
 
     return `${yyyy}-${mm}-${dd} ${formatClockTime(milliseconds)}`;
   }
