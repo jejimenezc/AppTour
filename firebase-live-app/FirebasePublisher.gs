@@ -286,6 +286,7 @@ function sanitizePublicTimeStateForFirebase_(timeState) {
     tournamentNowTs: String(source.tournamentNowTs || '').trim(),
     tournamentNowMs: Number(source.tournamentNowMs || 0),
     tournamentElapsedMs: Number(source.tournamentElapsedMs || 0),
+    pausedAccumulatedMs: Number(source.pausedAccumulatedMs || 0),
     currentBlockId: String(source.currentBlockId || '').trim(),
     currentPhase: String(source.currentPhase || '').trim(),
     phaseRemainingMs: Number(source.phaseRemainingMs || 0),

@@ -242,6 +242,7 @@
       serverOffsetMs: Number(snapshot.serverOffsetMs || 0),
       tournamentStartMs: Number(snapshot.tournamentStartMs || 0),
       tournamentElapsedMs: Number(snapshot.tournamentElapsedMs || 0),
+      pausedAccumulatedMs: Number(snapshot.pausedAccumulatedMs || 0),
       timerStatus: String(snapshot.timerStatus || (snapshot.isRunning ? 'running' : 'paused')).trim(),
       currentPhase: String(snapshot.currentPhase || '').trim(),
       phaseRemainingMs: Number(snapshot.phaseRemainingMs || 0),
@@ -266,6 +267,7 @@
     const baseSnapshot = {
       isRunning: String(stored && stored.timerStatus || '').trim() === 'running',
       tournamentElapsedMs: Math.max(0, Number(stored && stored.tournamentElapsedMs || 0)),
+      pausedAccumulatedMs: Math.max(0, Number(stored && stored.pausedAccumulatedMs || 0)),
       currentPhase: String(stored && stored.currentPhase || '').trim() || 'scheduled',
       phaseRemainingMs: Math.max(0, Number(stored && stored.phaseRemainingMs || 0)),
       phaseSequence: Array.isArray(stored && stored.phaseSequence) ? stored.phaseSequence.slice() : ['scheduled', 'live', 'closing', 'transition'],
@@ -279,6 +281,7 @@
       tournamentStartMs: tournamentStartMs,
       tournamentStartTs: formatClockStamp(tournamentStartMs),
       tournamentElapsedMs: projected.elapsedMs,
+      pausedAccumulatedMs: Number(stored && stored.pausedAccumulatedMs || 0),
       currentPhase: projected.currentPhase,
       phaseRemainingMs: projected.phaseRemainingMs,
       phaseSequence: baseSnapshot.phaseSequence,
@@ -313,7 +316,7 @@
   }
 
   function resyncPublicScreenOnFocus_() {
-    if (getSavedAppScreen() !== 'public') return;
+    if (!isPublicScreenActive_()) return;
 
     if (currentPublicVm) {
       renderPublicScreenAtClientTime_();
@@ -326,6 +329,11 @@
 
   function stopPublicAutoRefresh() {
     return;
+  }
+
+  function isPublicScreenActive_() {
+    const publicPanel = document.querySelector('[data-screen-panel="public"]');
+    return !!(publicPanel && publicPanel.classList.contains('is-active') && !publicPanel.hidden);
   }
 
   function startMyDayAutoRefresh() {
@@ -348,6 +356,7 @@
 
     myDayClockTimer = window.setInterval(function () {
       updateAppHeaderClock();
+      updateAdminClockPanel_();
       updateMyDayClockHud();
     }, CLIENT_CLOCK_TICK_MS);
   }
@@ -422,6 +431,20 @@
   function shouldAcceptIncomingClockBase_(vm, didBlockChange) {
     if (didBlockChange) return true;
     if (!vm || !vm.timeState) return false;
+
+    const incomingTimerStatus = String(vm.timeState.timerStatus || '').trim();
+    const currentTimerStatus = appHeaderClockSnapshot
+      ? String(appHeaderClockSnapshot.timerStatus || (appHeaderClockSnapshot.isRunning ? 'running' : 'paused')).trim()
+      : '';
+    if (incomingTimerStatus && incomingTimerStatus !== currentTimerStatus) {
+      return true;
+    }
+
+    const incomingServerNowMs = Number(vm.timeState.serverNowMs || 0);
+    const currentServerNowMs = appHeaderClockSnapshot ? Number(appHeaderClockSnapshot.serverNowMs || 0) : 0;
+    if (incomingServerNowMs && currentServerNowMs && incomingServerNowMs >= currentServerNowMs) {
+      return true;
+    }
 
     const incomingInternalNowMs = getIncomingTournamentNowMs_(vm);
     const projectedSnapshot = getProjectedClockSnapshot_();
@@ -879,7 +902,10 @@
       timerStatus: normalized.timerStatus,
       currentPhase: normalized.currentPhase,
       phaseRemainingMs: normalized.phaseRemainingMs,
+      phaseSequence: normalized.phaseSequence,
       phases: normalized.phases,
+      tournamentElapsedMs: normalized.tournamentElapsedMs,
+      pausedAccumulatedMs: normalized.pausedAccumulatedMs,
       serverNowMs: normalized.serverNowMs,
       serverOffsetMs: normalized.serverOffsetMs,
       usesTimeState: normalized.usesTimeState,
@@ -917,6 +943,7 @@
         phaseSequence: Array.isArray(source.phaseSequence) ? source.phaseSequence.slice() : ['scheduled', 'live', 'closing', 'transition'],
         phases: source.phases && typeof source.phases === 'object' ? source.phases : {},
         tournamentElapsedMs: Math.max(0, tournamentElapsedMs),
+        pausedAccumulatedMs: Math.max(0, Number(source.pausedAccumulatedMs || 0)),
         health: 'ok',
         healthMessage: '',
         triggerLastRunAt: '',
@@ -938,6 +965,7 @@
       phaseSequence: ['scheduled', 'live', 'closing', 'transition'],
       phases: {},
       tournamentElapsedMs: Math.max(0, parseCanonicalDateTime(source.internalNowTs) - parseCanonicalDateTime(source.tournamentStartTs)),
+      pausedAccumulatedMs: 0,
       health: String(source.clockHealth || 'ok'),
       healthMessage: String(source.clockHealthMessage || ''),
       triggerLastRunAt: String(source.triggerLastRunAt || '').trim(),
@@ -959,7 +987,14 @@
     const driftMs = snapshot.isRunning
       ? Math.max(0, effectiveNowMs - (snapshot.realNowMs || referenceReceivedAtMs))
       : 0;
-    const projectedPhaseState = projectTimeStatePhase_(snapshot, driftMs);
+    const baseElapsedMs = Math.max(0, Number(snapshot.tournamentElapsedMs || 0));
+    const projectedElapsedMs = snapshot.usesTimeState && snapshot.isRunning
+      ? Math.max(0, baseElapsedMs + Math.max(0, effectiveNowMs - (snapshot.serverNowMs || snapshot.realNowMs || referenceReceivedAtMs)))
+      : Math.max(0, baseElapsedMs + driftMs);
+    const projectedPhaseState = projectTimeStatePhase_(
+      snapshot,
+      Math.max(0, projectedElapsedMs - baseElapsedMs)
+    );
     const internalNowMs = (snapshot.tournamentStartMs || 0) + projectedPhaseState.elapsedMs;
     const realNowMs = snapshot.usesTimeState
       ? effectiveNowMs
@@ -974,6 +1009,7 @@
       phaseRemainingMs: projectedPhaseState.phaseRemainingMs,
       phaseSequence: snapshot.phaseSequence,
       tournamentElapsedMs: projectedPhaseState.elapsedMs,
+      pausedAccumulatedMs: Math.max(0, Number(snapshot.pausedAccumulatedMs || 0)),
     });
   }
 
@@ -1041,15 +1077,46 @@
     }
 
     const internalNowMs = snapshot.internalNowMs;
-    const remainingInPhaseMs = Math.max(0, Number(snapshot.phaseRemainingMs || 0));
+    const tournamentElapsedMs = Math.max(0, internalNowMs - snapshot.tournamentStartMs);
     const runningLabel = snapshot.isRunning ? 'corriendo' : 'pausado';
     const healthSuffix = snapshot.health && snapshot.health !== 'ok' ? ` | ${snapshot.healthMessage || snapshot.health}` : '';
 
-    root.textContent = `Cronometro del torneo: ${formatElapsedClock(remainingInPhaseMs)} | Estado: ${runningLabel} | Hora interna: ${formatClockStamp(internalNowMs)}${healthSuffix}`;
+    root.textContent = `Cronometro del torneo: ${formatElapsedClock(tournamentElapsedMs)} | Estado: ${runningLabel} | Hora interna: ${formatClockStamp(internalNowMs)}${healthSuffix}`;
 
-    if (currentPublicVm && getSavedAppScreen() === 'public') {
+    if (currentPublicVm && isPublicScreenActive_()) {
       renderPublicScreenAtClientTime_();
     }
+  }
+
+  function updateAdminClockPanel_() {
+    const elapsedNode = document.getElementById('admin-clock-elapsed');
+    const internalNode = document.getElementById('admin-clock-internal');
+    const realNode = document.getElementById('admin-clock-real');
+    const runningNode = document.getElementById('admin-clock-running');
+    const phaseNode = document.getElementById('admin-clock-phase');
+    const pausedNode = document.getElementById('admin-clock-paused');
+
+    if (!elapsedNode && !internalNode && !realNode && !runningNode && !phaseNode && !pausedNode) {
+      return;
+    }
+
+    const snapshot = getProjectedClockSnapshot_() || appHeaderClockSnapshot;
+    if (!snapshot) {
+      if (elapsedNode) elapsedNode.textContent = '-';
+      if (internalNode) internalNode.textContent = '-';
+      if (realNode) realNode.textContent = '-';
+      if (runningNode) runningNode.textContent = '-';
+      if (phaseNode) phaseNode.textContent = '-';
+      if (pausedNode) pausedNode.textContent = '-';
+      return;
+    }
+
+    if (elapsedNode) elapsedNode.textContent = formatElapsedClock(Number(snapshot.tournamentElapsedMs || 0));
+    if (internalNode) internalNode.textContent = snapshot.internalNowMs ? formatClockStamp(snapshot.internalNowMs) : '-';
+    if (realNode) realNode.textContent = snapshot.realNowMs ? formatClockStamp(snapshot.realNowMs) : '-';
+    if (runningNode) runningNode.textContent = snapshot.isRunning ? 'TRUE' : 'FALSE';
+    if (phaseNode) phaseNode.textContent = String(snapshot.currentPhase || '-');
+    if (pausedNode) pausedNode.textContent = formatElapsedClock(Number(snapshot.pausedAccumulatedMs || 0));
   }
 
   function formatRealtimeGeneratedAt() {
@@ -1249,6 +1316,7 @@
         phaseRemainingMs: Number(projectedClock.phaseRemainingMs || 0),
         phaseSequence: Array.isArray(projectedClock.phaseSequence) ? projectedClock.phaseSequence.slice() : ['scheduled', 'live', 'closing', 'transition'],
         tournamentElapsedMs: Number(projectedClock.tournamentElapsedMs || 0),
+        pausedAccumulatedMs: Number(projectedClock.pausedAccumulatedMs || 0),
         tournamentNowTs: formatClockStamp(projectedClock.internalNowMs),
         serverNowMs: projectedClock.realNowMs,
         serverNowTs: formatClockStamp(projectedClock.realNowMs),
@@ -1973,11 +2041,15 @@
             <div class="admin-kv-label">Ancla torneo</div>
             <div class="admin-code">${escapeHtml(vm.tournamentStartTs || '-')}</div>
             <div class="admin-kv-label">Hora interna</div>
-            <div class="admin-code">${escapeHtml(vm.internalClockNowTs || '-')}</div>
+            <div id="admin-clock-internal" class="admin-code">${escapeHtml(vm.timeState && vm.timeState.tournamentNowTs || vm.internalClockNowTs || '-')}</div>
             <div class="admin-kv-label">Hora real</div>
-            <div class="admin-code">${escapeHtml(vm.realNowTs || '-')}</div>
+            <div id="admin-clock-real" class="admin-code">${escapeHtml(vm.timeState && vm.timeState.serverNowTs || vm.realNowTs || '-')}</div>
             <div class="admin-kv-label">Cronometro</div>
-            <div class="admin-code">${escapeHtml(formatElapsedClock(vm.clockElapsedMs || 0))}</div>
+            <div id="admin-clock-elapsed" class="admin-code">${escapeHtml(formatElapsedClock(vm.timeState && vm.timeState.tournamentElapsedMs || vm.clockElapsedMs || 0))}</div>
+            <div class="admin-kv-label">Fase actual</div>
+            <div id="admin-clock-phase" class="admin-code">${escapeHtml(vm.timeState && vm.timeState.currentPhase || '-')}</div>
+            <div class="admin-kv-label">Pausa acumulada</div>
+            <div id="admin-clock-paused" class="admin-code">${escapeHtml(formatElapsedClock(vm.timeState && vm.timeState.pausedAccumulatedMs || 0))}</div>
             <div class="admin-kv-label">Ultima reanudacion</div>
             <div class="admin-code">${escapeHtml(vm.clockLastResumeRealTs || '-')}</div>
             <div class="admin-kv-label">Motor procesado</div>
@@ -2025,7 +2097,7 @@
             <div class="admin-kv-label">Pool</div>
             <div class="admin-code">${escapeHtml(vm.doublesSummary.pool || 0)}</div>
             <div class="admin-kv-label">Cronometro corriendo</div>
-            <div class="admin-code">${escapeHtml(vm.clockIsRunning ? 'TRUE' : 'FALSE')}</div>
+            <div id="admin-clock-running" class="admin-code">${escapeHtml(vm.timeState && vm.timeState.timerStatus === 'running' ? 'TRUE' : 'FALSE')}</div>
             <div class="admin-kv-label">Trigger count</div>
             <div class="admin-code">${escapeHtml(vm.trigger.triggerCount || 0)}</div>
             <div class="admin-kv-label">Ultimo tick</div>
@@ -2055,6 +2127,7 @@
       setAdminActionFeedback(vm.lastActionMessage);
     }
 
+    updateAdminClockPanel_();
     updateControlHeartbeatUi();
   }
 

@@ -854,18 +854,25 @@ function buildPublicTimeState_(currentBlock) {
   const serverNowDate = parseBlockDate(serverNowTs);
   const tournamentNowDate = parseBlockDate(tournamentNowTs);
   const tournamentStartDate = parseBlockDate(tournamentStartTs);
+  const serverNowMs = serverNowDate ? serverNowDate.getTime() : 0;
+  const tournamentStartMs = tournamentStartDate ? tournamentStartDate.getTime() : 0;
   const tournamentNowMs = tournamentNowDate ? tournamentNowDate.getTime() : 0;
   const currentPhase = getPublicCurrentPhaseCode_(currentBlock, tournamentNowMs);
+  const tournamentElapsedMs = Number(clockState.elapsedMs || 0);
+  const pausedAccumulatedMs = serverNowMs && tournamentStartMs
+    ? Math.max(0, serverNowMs - tournamentStartMs - tournamentElapsedMs)
+    : 0;
 
   return {
     timerStatus: clockState.isRunning ? 'running' : 'paused',
     serverNowTs: serverNowTs,
-    serverNowMs: serverNowDate ? serverNowDate.getTime() : 0,
+    serverNowMs: serverNowMs,
     tournamentStartTs: tournamentStartTs,
-    tournamentStartMs: tournamentStartDate ? tournamentStartDate.getTime() : 0,
+    tournamentStartMs: tournamentStartMs,
     tournamentNowTs: tournamentNowTs,
     tournamentNowMs: tournamentNowMs,
-    tournamentElapsedMs: Number(clockState.elapsedMs || 0),
+    tournamentElapsedMs: tournamentElapsedMs,
+    pausedAccumulatedMs: pausedAccumulatedMs,
     currentBlockId: currentBlock ? String(currentBlock.block_id || '').trim() : '',
     currentPhase: currentPhase,
     phaseRemainingMs: getPublicPhaseRemainingMs_(currentBlock, tournamentNowMs, currentPhase),
