@@ -1785,17 +1785,7 @@
 
   function renderAdminControl(vm) {
     currentAdminVm = vm;
-    updateAppHeaderClockSnapshot(vm ? {
-      tournamentStartTs: vm.tournamentStartTs,
-      internalNowTs: vm.internalClockNowTs,
-      realNowTs: vm.realNowTs,
-      isRunning: !!vm.clockIsRunning,
-      lastResumeRealTs: vm.clockLastResumeRealTs,
-      triggerLastRunAt: vm.trigger ? vm.trigger.lastRunAt : '',
-      lastProcessedInternalTs: vm.clockLastProcessedInternalTs,
-      clockHealth: vm.clockHealth,
-      clockHealthMessage: vm.clockHealthMessage,
-    } : null);
+    updateAppHeaderClockSnapshot(vm && vm.timeState ? vm.timeState : null);
     renderAdminGroupsEntryCard();
 
     const root = document.getElementById('admin-control-content');
@@ -2209,8 +2199,8 @@
     return new Promise(function (resolve, reject) {
       google.script.run
         .withSuccessHandler(function (result) {
-          if (result && result.clock) {
-            updateAppHeaderClockSnapshot(result.clock);
+          if (result && result.timeState) {
+            updateAppHeaderClockSnapshot(result.timeState);
           }
           if (result && result.tickResult && result.tickResult.currentBlockStatus) {
             controlHeartbeatLeaseInfo = Object.assign({}, controlHeartbeatLeaseInfo || {}, {
@@ -2646,7 +2636,7 @@
 
   function renderMyDay(vm) {
     currentMyDayVm = vm;
-    updateAppHeaderClockSnapshot(vm && vm.clock ? vm.clock : null);
+    updateAppHeaderClockSnapshot(vm && vm.timeState ? vm.timeState : null);
     myDayClockSnapshot = {
       internalNowMs: parseCanonicalDateTime(vm && vm.clock ? vm.clock.internalNowTs : vm.generatedAt),
       realNowMs: parseCanonicalDateTime(vm && vm.clock ? vm.clock.realNowTs || vm.generatedAt : vm.generatedAt),

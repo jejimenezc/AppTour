@@ -123,6 +123,7 @@ function getMyDayViewModel(playerId) {
           allowedCaptureActions: getAllowedCaptureActions(currentMatch, playerId),
         }
       : null,
+    timeState: buildPublicTimeState_(currentBlock),
     clock: buildTournamentClockPayload_(),
     timeline: buildMyDayTimeline(playerId, currentBlock),
     generatedAt: nowIso(),
@@ -694,6 +695,7 @@ function getAdminControlViewModel() {
   const currentBlock = getCurrentBlock();
   const triggerStatus = getTournamentClockTriggerStatus();
   const clock = buildTournamentClockPayload_();
+  const timeState = buildPublicTimeState_(currentBlock);
   const doublesSummary = getDoublesStatusSummary();
   const matches = getRows('Matches');
   const tournamentStatus = String(getConfigValue('tournament_status') || '').trim();
@@ -703,6 +705,7 @@ function getAdminControlViewModel() {
 
   return {
     tournamentStatus: tournamentStatus,
+    timeState: timeState,
     tournamentStartTs: clock.tournamentStartTs,
     internalClockNowTs: clock.internalNowTs,
     realNowTs: clock.realNowTs,
@@ -837,6 +840,7 @@ function runControlHeartbeatFromUi() {
     ok: !!(result && result.ok),
     tickResult: result ? result.tickResult || null : null,
     publishResult: result ? result.publishResult || null : null,
+    timeState: buildPublicTimeState_(getCurrentBlock()),
     clock: buildTournamentClockPayload_(),
     generatedAt: nowIso(),
   };
