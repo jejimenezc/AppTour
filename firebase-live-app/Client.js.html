@@ -1251,9 +1251,9 @@
   }
 
   function mapRealtimeMatchToMyDayMatch(baseMatch, realtimeMatch) {
-    const nextStatus = String(realtimeMatch && (realtimeMatch.matchStatus || realtimeMatch.status) || baseMatch.matchStatus || '').trim();
-    const nextResultMode = String(realtimeMatch && realtimeMatch.resultMode || baseMatch.resultMode || '').trim();
-    const nextClosingState = String(realtimeMatch && realtimeMatch.closingState || baseMatch.closingState || '').trim();
+    const nextEventState = normalizeMyDayEventState_(
+      realtimeMatch && realtimeMatch.eventState ? realtimeMatch.eventState : baseMatch.eventState
+    );
 
     return {
       tableNo: realtimeMatch && realtimeMatch.tableNo != null ? realtimeMatch.tableNo : baseMatch.tableNo,
@@ -1261,17 +1261,29 @@
       leftLabel: realtimeMatch && realtimeMatch.leftLabel ? realtimeMatch.leftLabel : baseMatch.leftLabel,
       rightLabel: realtimeMatch && realtimeMatch.rightLabel ? realtimeMatch.rightLabel : baseMatch.rightLabel,
       matchupLabel: realtimeMatch && realtimeMatch.matchupLabel ? realtimeMatch.matchupLabel : baseMatch.matchupLabel,
-      matchStatus: nextStatus,
-      resultMode: nextResultMode,
-      closingState: nextClosingState,
+      eventState: nextEventState,
       isByeAdvance: typeof realtimeMatch.isByeAdvance === 'boolean' ? realtimeMatch.isByeAdvance : baseMatch.isByeAdvance,
-      allowedCaptureActions: Object.assign({}, baseMatch.allowedCaptureActions, deriveCaptureActionsFromRealtimeStatus(nextStatus)),
+      allowedCaptureActions: Object.assign({}, baseMatch.allowedCaptureActions, deriveCaptureActionsFromRealtimeEventState(nextEventState)),
     };
   }
 
-  function deriveCaptureActionsFromRealtimeStatus(status) {
-    const normalized = String(status || '').trim();
-    const isClosed = normalized === 'result_submitted' || normalized === 'auto_closed';
+  function normalizeMyDayEventState_(eventState) {
+    const source = eventState && typeof eventState === 'object' ? eventState : {};
+
+    return {
+      resultSubmitted: !!source.resultSubmitted,
+      autoClosed: !!source.autoClosed,
+      walkover: !!source.walkover,
+      tableBlocked: !!source.tableBlocked,
+      needsReview: !!source.needsReview,
+      resultMode: String(source.resultMode || '').trim(),
+      closingState: String(source.closingState || '').trim(),
+    };
+  }
+
+  function deriveCaptureActionsFromRealtimeEventState(eventState) {
+    const state = normalizeMyDayEventState_(eventState);
+    const isClosed = state.resultSubmitted || state.autoClosed;
 
     return {
       canOpen: !isClosed,
@@ -2267,6 +2279,42 @@
     updateControlHeartbeatUi();
   }
 
+  function buildMyDayVmForClientTime_(vm) {
+    const baseVm = vm || {};
+    const projectedClock = getProjectedClockSnapshot_();
+    const currentBlock = baseVm.currentBlock ? Object.assign({}, baseVm.currentBlock) : null;
+    const currentMatch = baseVm.currentMatch ? Object.assign({}, baseVm.currentMatch) : null;
+
+    if (!projectedClock || !currentBlock) {
+      return Object.assign({}, baseVm, {
+        currentBlock: currentBlock,
+        currentMatch: currentMatch,
+      });
+    }
+
+    const expectedBlockStatus = String(projectedClock.currentPhase || '').trim() || getExpectedBlockStatus(currentBlock, projectedClock.internalNowMs);
+    currentBlock.visualStatusCode = expectedBlockStatus;
+    currentBlock.visualStatusLabel = formatTournamentStateLabel({ status: expectedBlockStatus });
+
+    if (currentMatch) {
+      currentMatch.visualStatus = derivePublicMatchStatus_(currentMatch, currentBlock, projectedClock.internalNowMs);
+    }
+
+    return Object.assign({}, baseVm, {
+      currentBlock: currentBlock,
+      currentMatch: currentMatch,
+      timeState: Object.assign({}, baseVm.timeState || {}, {
+        currentPhase: expectedBlockStatus,
+        phaseRemainingMs: Number(projectedClock.phaseRemainingMs || 0),
+        tournamentElapsedMs: Number(projectedClock.tournamentElapsedMs || 0),
+        tournamentNowTs: formatClockStamp(projectedClock.internalNowMs),
+        serverNowMs: projectedClock.realNowMs,
+        serverNowTs: formatClockStamp(projectedClock.realNowMs),
+        timerStatus: projectedClock.isRunning ? 'running' : 'paused',
+      }),
+    });
+  }
+
   function renderAdminControlError(error) {
     renderAdminGroupsEntryCard();
     const root = document.getElementById('admin-control-content');
@@ -2995,12 +3043,14 @@
     };
     renderMyDayDoublesEntryCard();
 
+    const derivedVm = buildMyDayVmForClientTime_(vm);
+
     const root = document.getElementById('myday-content');
-    const playerRoleUi = getMyDayPlayerRoleUi(vm);
-    const matchRoleUi = getMyDayMatchRoleUi(vm);
-    const nextCommitment = buildMyDayCommitmentLabel(vm);
-    const cta = buildMyDayCta(vm);
-    const matchMeta = vm.currentMatch || null;
+    const playerRoleUi = getMyDayPlayerRoleUi(derivedVm);
+    const matchRoleUi = getMyDayMatchRoleUi(derivedVm);
+    const nextCommitment = buildMyDayCommitmentLabel(derivedVm);
+    const cta = buildMyDayCta(derivedVm);
+    const matchMeta = derivedVm.currentMatch || null;
 
     let playerBadgeHtml = '';
     if (playerRoleUi.show) {
@@ -3070,10 +3120,10 @@
                 ${vm.currentBlock ? `Bloque ${escapeHtml(vm.currentBlock.id)}` : 'Sin bloque activo'}
               </div>
               <div class="helper" style="margin-top: 6px;">
-                ${vm.currentBlock ? escapeHtml(vm.currentBlock.phaseLabel || '') : 'No hay fase en curso'}
+                ${derivedVm.currentBlock ? escapeHtml(derivedVm.currentBlock.phaseLabel || '') : 'No hay fase en curso'}
               </div>
             </div>
-            <span class="status-pill status-done">${escapeHtml(formatTournamentStateLabel(vm.currentBlock))}</span>
+            <span class="status-pill status-done" id="myday-block-status-pill">${escapeHtml(formatTournamentStateLabel(derivedVm.currentBlock))}</span>
           </div>
         </div>
 
@@ -3126,13 +3176,15 @@
     const nextValueEl = document.getElementById('myday-clock-next-value');
     const expectedStatusEl = document.getElementById('myday-clock-expected-status');
     const statusPillEl = document.getElementById('myday-clock-status-pill');
+    const blockStatusPillEl = document.getElementById('myday-block-status-pill');
 
     if (!clockValueEl || !syncEl || !nextLabelEl || !nextValueEl || !expectedStatusEl || !statusPillEl) {
       return;
     }
 
     const vm = currentMyDayVm;
-    const snapshot = myDayClockSnapshot;
+    const snapshotState = myDayClockSnapshot || {};
+    const snapshot = getProjectedClockSnapshot_();
     const clock = vm && vm.clock ? vm.clock : null;
     const clockHealth = String(clock && clock.clockHealth || snapshot && snapshot.health || 'ok');
     const clockHealthMessage = String(clock && clock.clockHealthMessage || snapshot && snapshot.healthMessage || '');
@@ -3175,11 +3227,12 @@
     }
 
     const internalNowMs = snapshot.internalNowMs;
-    const tournamentStartMs = parseCanonicalDateTime(vm.clock && vm.clock.tournamentStartTs);
+    const tournamentStartMs = Number(snapshot.tournamentStartMs || 0);
     const realNowMs = snapshot.realNowMs || Date.now();
     const currentBlock = vm.currentBlock || null;
     const beforeTournamentStart = !!tournamentStartMs && internalNowMs < tournamentStartMs;
     const expectedStatus = getExpectedBlockStatus(currentBlock, internalNowMs);
+    const expectedLabel = expectedStatus ? formatTournamentStateLabel({ status: expectedStatus }) : 'Sin bloque';
     const nextMilestone = getNextBlockMilestone(currentBlock, internalNowMs);
     const snapshotStatus = currentBlock ? String(currentBlock.status || '').trim() : '';
     const drifted = !!currentBlock && expectedStatus && snapshotStatus && expectedStatus !== snapshotStatus;
@@ -3196,7 +3249,12 @@
     }
     nextLabelEl.textContent = nextMilestone.label;
     nextValueEl.textContent = nextMilestone.value;
-    expectedStatusEl.textContent = expectedStatus ? formatTournamentStateLabel({ status: expectedStatus }) : 'Sin bloque';
+    expectedStatusEl.textContent = expectedLabel;
+    if (blockStatusPillEl) {
+      blockStatusPillEl.textContent = currentBlock
+        ? formatTournamentStateLabel({ status: expectedStatus || currentBlock.status || '' })
+        : 'Sin actividad';
+    }
 
     if (clockHealth === 'missing_start_ts') {
       statusPillEl.textContent = 'Config invalida';
@@ -3214,7 +3272,7 @@
       statusPillEl.textContent = 'Esperando refresh';
       statusPillEl.className = 'status-pill status-pending';
     } else {
-      statusPillEl.textContent = expectedStatus ? 'Sincronizado' : 'Sin bloque';
+      statusPillEl.textContent = expectedStatus ? expectedLabel : 'Sin bloque';
       statusPillEl.className = expectedStatus ? 'status-pill status-done' : 'status-pill status-closed';
     }
 
@@ -3248,8 +3306,9 @@
 
     syncEl.textContent = syncParts.join(' · ');
 
-    if (currentBlock && (forceRefreshCheck || expectedStatus !== snapshot.lastExpectedStatus)) {
-      snapshot.lastExpectedStatus = expectedStatus;
+    if (currentBlock && (forceRefreshCheck || expectedStatus !== snapshotState.lastExpectedStatus)) {
+      snapshotState.lastExpectedStatus = expectedStatus;
+      myDayClockSnapshot = snapshotState;
     }
   }
 
@@ -3429,6 +3488,7 @@
     }
 
     const isFinished = isMyDayMatchFinished(vm.currentMatch);
+    const visualStatus = String(vm.currentMatch.visualStatus || '').trim();
 
     if (isFinished) {
       return {
@@ -3441,16 +3501,24 @@
     if (vm.currentMatch.isReferee) {
       return {
         show: true,
-        label: 'Eres árbitro en este partido',
-        className: 'status-live',
+        label: visualStatus === 'Programado'
+          ? 'Arbitraje programado'
+          : visualStatus === 'Cierre en curso'
+            ? 'Arbitraje · ventana de cierre'
+            : 'Eres árbitro en este partido',
+        className: visualStatus === 'Programado' ? 'status-pending' : 'status-live',
       };
     }
 
     if (vm.currentMatch.isPlayerA || vm.currentMatch.isPlayerB) {
       return {
         show: true,
-        label: 'Juega ahora',
-        className: 'status-live',
+        label: visualStatus === 'Programado'
+          ? 'Juegas pronto'
+          : visualStatus === 'Cierre en curso'
+            ? 'Jugada en ventana de cierre'
+            : 'Juega ahora',
+        className: visualStatus === 'Programado' ? 'status-pending' : 'status-live',
       };
     }
 
@@ -3458,13 +3526,8 @@
   }
 
   function isMyDayMatchFinished(match) {
-    const status = String(match.matchStatus || '').trim();
-    const resultMode = String(match.resultMode || '').trim();
-
-    return (
-      status === 'result_submitted' &&
-      resultMode === 'final'
-    ) || status === 'auto_closed';
+    const eventState = normalizeMyDayEventState_(match && match.eventState);
+    return eventState.resultSubmitted || eventState.autoClosed;
   }
 
   function buildMyDayCommitmentLabel(vm) {
@@ -3491,14 +3554,18 @@
 
     if (vm.currentMatch && vm.currentMatch.isReferee) {
       return {
-        title: 'Arbitraje asignado ahora',
+        title: String(vm.currentMatch.visualStatus || '').trim() === 'Programado'
+          ? 'Arbitraje asignado en este bloque'
+          : 'Arbitraje asignado ahora',
         detail: `Bloque ${vm.currentBlock.id} · ${vm.currentBlock.phaseLabel}`,
       };
     }
 
     if (vm.currentMatch && (vm.currentMatch.isPlayerA || vm.currentMatch.isPlayerB)) {
       return {
-        title: 'Partido asignado ahora',
+        title: String(vm.currentMatch.visualStatus || '').trim() === 'Programado'
+          ? 'Partido asignado en este bloque'
+          : 'Partido asignado ahora',
         detail: `Bloque ${vm.currentBlock.id} · ${vm.currentBlock.phaseLabel}`,
       };
     }
@@ -3714,7 +3781,17 @@
       };
     }
 
+    const visualStatus = String(vm.currentMatch.visualStatus || '').trim();
+    const isCaptureWindow = visualStatus === 'En juego' || visualStatus === 'Cierre en curso';
     const actions = vm.currentMatch.allowedCaptureActions || {};
+
+    if (!isCaptureWindow) {
+      return {
+        label: 'Captura no disponible',
+        disabled: true,
+        helperText: 'La captura se habilita solo cuando el bloque está en juego o en ventana de cierre.',
+      };
+    }
 
     if (vm.currentMatch.isReferee && actions.canOpen) {
       return {

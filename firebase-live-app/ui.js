@@ -116,9 +116,7 @@ function getMyDayViewModel(playerId) {
           isReferee: playerContext.isReferee,
           isPlayerA: playerContext.isPlayerA,
           isPlayerB: playerContext.isPlayerB,
-          matchStatus: String(currentMatch.status || ''),
-          resultMode: String(currentMatch.result_mode || ''),
-          closingState: String(currentMatch.closing_state || ''),
+          eventState: buildPublicMatchEventState_(currentMatch),
           isByeAdvance: isByeAdvanceMatch(currentMatch),
           allowedCaptureActions: getAllowedCaptureActions(currentMatch, playerId),
         }
