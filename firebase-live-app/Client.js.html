@@ -3535,31 +3535,42 @@
       };
     }
 
+    const statusUi = getMyDayVisualStatusUi_(visualStatus);
+
     if (vm.currentMatch.isReferee) {
       return {
         show: true,
-        label: visualStatus === 'Programado'
-          ? 'Arbitraje programado'
-          : visualStatus === 'Cierre en curso'
-            ? 'Arbitraje · ventana de cierre'
-            : 'Eres árbitro en este partido',
-        className: visualStatus === 'Programado' ? 'status-pending' : 'status-live',
+        label: statusUi.label,
+        className: statusUi.className,
       };
     }
 
     if (vm.currentMatch.isPlayerA || vm.currentMatch.isPlayerB) {
       return {
         show: true,
-        label: visualStatus === 'Programado'
-          ? 'Juegas pronto'
-          : visualStatus === 'Cierre en curso'
-            ? 'Jugada en ventana de cierre'
-            : 'Juega ahora',
-        className: visualStatus === 'Programado' ? 'status-pending' : 'status-live',
+        label: statusUi.label,
+        className: statusUi.className,
       };
     }
 
     return { show: false, label: '', className: '' };
+  }
+
+  function getMyDayVisualStatusUi_(visualStatus) {
+    const value = String(visualStatus || '').trim();
+    if (value === 'Programado') {
+      return { label: value, className: 'status-pending' };
+    }
+    if (value === 'En juego' || value === 'Cierre en curso') {
+      return { label: value, className: 'status-live' };
+    }
+    if (value === 'Resultado ingresado' || value === 'Cerrado' || value === 'Cerrado/Terminado') {
+      return { label: value, className: 'status-done' };
+    }
+    if (value === 'Mesa bloqueada' || value === 'WO') {
+      return { label: value, className: 'status-closed' };
+    }
+    return { label: value || 'Sin estado', className: 'status-closed' };
   }
 
   function isMyDayMatchFinished(match) {
@@ -3818,19 +3829,15 @@
       };
     }
 
-    const visualStatus = String(vm.currentMatch.visualStatus || '').trim();
-    const isCaptureWindow = visualStatus === 'En juego' || visualStatus === 'Cierre en curso';
-    const actions = vm.currentMatch.allowedCaptureActions || {};
-
-    if (!isCaptureWindow) {
+    if (!canOpenMyDayCapture_(vm.currentMatch)) {
       return {
         label: 'Captura no disponible',
         disabled: true,
-        helperText: 'La captura se habilita solo cuando el bloque está en juego o en ventana de cierre.',
+        helperText: 'La captura se habilita solo cuando el partido esta En juego o en Cierre en curso.',
       };
     }
 
-    if (vm.currentMatch.isReferee && actions.canOpen) {
+    if (vm.currentMatch.isReferee) {
       return {
         label: 'Ingresar resultado',
         disabled: false,
@@ -3838,7 +3845,7 @@
       };
     }
 
-    if ((vm.currentMatch.isPlayerA || vm.currentMatch.isPlayerB) && actions.canOpen) {
+    if (vm.currentMatch.isPlayerA || vm.currentMatch.isPlayerB) {
       return {
         label: 'Ingresar resultado',
         disabled: false,
@@ -3849,7 +3856,7 @@
     return {
       label: 'Captura no disponible',
       disabled: true,
-      helperText: 'La captura se habilita solo cuando el bloque esta en juego o en cierre.',
+      helperText: 'La captura requiere que seas jugador o arbitro del partido.',
     };
   }
 
@@ -3858,10 +3865,9 @@
     if (isMyDayMatchFinished(currentMyDayVm.currentMatch)) return;
 
     const m = currentMyDayVm.currentMatch;
-    const actions = m.allowedCaptureActions || {};
     const isReferee = !!m.isReferee;
 
-    if (!actions.canOpen) return;
+    if (!canOpenMyDayCapture_(m)) return;
 
     const modalTitle = 'Captura de resultado';
     const actionPanelsHtml = buildRefereeCapturePanel(m, isReferee);
@@ -3918,6 +3924,20 @@
 
     closeMatchCapture();
     document.body.insertAdjacentHTML('beforeend', html);
+  }
+
+  function canOpenMyDayCapture_(match) {
+    if (!match) return false;
+    if (match.isByeAdvance) return false;
+    if (isMyDayMatchFinished(match)) return false;
+
+    const visualStatus = String(match.visualStatus || '').trim();
+    const eventState = normalizeMyDayEventState_(match.eventState);
+    const isCaptureWindow = visualStatus === 'En juego' || visualStatus === 'Cierre en curso';
+    const isParticipant = !!(match.isReferee || match.isPlayerA || match.isPlayerB);
+    const blockedByEvent = !!(eventState.resultSubmitted || eventState.autoClosed || eventState.tableBlocked);
+
+    return isParticipant && isCaptureWindow && !blockedByEvent;
   }
 
   function buildCaptureSidesLegend(match) {
