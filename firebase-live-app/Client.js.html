@@ -196,7 +196,6 @@
   }
 
   function isAdminScreenActive_() {
-    if (getSavedAppScreen() === 'admin') return true;
     const adminPanel = document.querySelector('[data-screen-panel="admin"]');
     return !!(adminPanel && adminPanel.classList.contains('is-active') && !adminPanel.hidden);
   }
@@ -334,6 +333,16 @@
   function isPublicScreenActive_() {
     const publicPanel = document.querySelector('[data-screen-panel="public"]');
     return !!(publicPanel && publicPanel.classList.contains('is-active') && !publicPanel.hidden);
+  }
+
+  function isMyDayScreenActive_() {
+    const myDayPanel = document.querySelector('[data-screen-panel="myday"]');
+    return !!(myDayPanel && myDayPanel.classList.contains('is-active') && !myDayPanel.hidden);
+  }
+
+  function isDoublesScreenActive_() {
+    const doublesPanel = document.querySelector('[data-screen-panel="doubles"]');
+    return !!(doublesPanel && doublesPanel.classList.contains('is-active') && !doublesPanel.hidden);
   }
 
   function startMyDayAutoRefresh() {
@@ -2999,11 +3008,10 @@
   function refreshCurrentPlayerExperience(options) {
     const opts = options || {};
     const playerId = getSavedPlayerId();
-    const activeScreen = getSavedAppScreen();
 
     if (!playerId) return;
 
-    if (!(activeScreen === 'myday' || activeScreen === 'doubles' || opts.force)) return;
+    if (!(isMyDayScreenActive_() || isDoublesScreenActive_() || opts.force)) return;
     if (myDayHeartbeatInFlight) return;
 
     myDayHeartbeatInFlight = true;
@@ -3026,19 +3034,10 @@
       .syncTournamentClockHeartbeatFromUi();
   }
 
-  function refreshMyDayNow() {
-    refreshCurrentPlayerExperience({ silent: false });
-  }
-
   function renderMyDay(vm) {
     currentMyDayVm = vm;
     updateAppHeaderClockSnapshot(vm && vm.timeState ? vm.timeState : null);
     myDayClockSnapshot = {
-      internalNowMs: parseCanonicalDateTime(vm && vm.clock ? vm.clock.internalNowTs : vm.generatedAt),
-      realNowMs: parseCanonicalDateTime(vm && vm.clock ? vm.clock.realNowTs || vm.generatedAt : vm.generatedAt),
-      isRunning: !!(vm && vm.clock && vm.clock.isRunning),
-      health: String(vm && vm.clock && vm.clock.clockHealth || 'ok'),
-      healthMessage: String(vm && vm.clock && vm.clock.clockHealthMessage || ''),
       lastExpectedStatus: '',
     };
     renderMyDayDoublesEntryCard();
@@ -3132,20 +3131,9 @@
             <div>
               <div class="stat-label">Reloj interno</div>
               <div class="myday-clock-value" id="myday-clock-now">--:--:--</div>
-              <div class="helper myday-clock-meta" id="myday-clock-sync">Esperando sincronizacion...</div>
+              <div class="helper myday-clock-meta" id="myday-clock-phase">Esperando sincronización...</div>
             </div>
             <span class="status-pill status-pending" id="myday-clock-status-pill">Sin snapshot</span>
-          </div>
-
-          <div class="myday-clock-grid">
-            <div class="myday-clock-metric">
-              <div class="stat-label" id="myday-clock-next-label">Proximo hito</div>
-              <div class="stat-value" style="font-size: 18px;" id="myday-clock-next-value">-</div>
-            </div>
-            <div class="myday-clock-metric">
-              <div class="stat-label">Estado esperado</div>
-              <div class="stat-value" style="font-size: 18px;" id="myday-clock-expected-status">-</div>
-            </div>
           </div>
         </div>
 
@@ -3171,14 +3159,11 @@
 
   function updateMyDayClockHud(forceRefreshCheck) {
     const clockValueEl = document.getElementById('myday-clock-now');
-    const syncEl = document.getElementById('myday-clock-sync');
-    const nextLabelEl = document.getElementById('myday-clock-next-label');
-    const nextValueEl = document.getElementById('myday-clock-next-value');
-    const expectedStatusEl = document.getElementById('myday-clock-expected-status');
+    const phaseEl = document.getElementById('myday-clock-phase');
     const statusPillEl = document.getElementById('myday-clock-status-pill');
     const blockStatusPillEl = document.getElementById('myday-block-status-pill');
 
-    if (!clockValueEl || !syncEl || !nextLabelEl || !nextValueEl || !expectedStatusEl || !statusPillEl) {
+    if (!clockValueEl || !phaseEl || !statusPillEl) {
       return;
     }
 
@@ -3191,10 +3176,7 @@
 
     if (!vm || !snapshot || (!snapshot.internalNowMs && clockHealth !== 'missing_start_ts')) {
       clockValueEl.textContent = '--:--:--';
-      syncEl.textContent = 'Selecciona un jugador para ver su reloj interno.';
-      nextLabelEl.textContent = 'Proximo hito';
-      nextValueEl.textContent = '-';
-      expectedStatusEl.textContent = '-';
+      phaseEl.textContent = 'Selecciona un jugador para ver su reloj interno.';
       statusPillEl.textContent = 'Sin snapshot';
       statusPillEl.className = 'status-pill status-pending';
       return;
@@ -3202,25 +3184,7 @@
 
     if (clockHealth === 'missing_start_ts' || clockHealth === 'invalid_anchor') {
       clockValueEl.textContent = '--:--:--';
-      nextLabelEl.textContent = 'Proximo hito';
-      nextValueEl.textContent = 'Configura inicio';
-      expectedStatusEl.textContent = 'Sin referencia';
-
-      const syncParts = [];
-      if (snapshot.realNowMs) {
-        syncParts.push(`hora real ${formatClockStamp(snapshot.realNowMs)}`);
-      }
-      if (myDayLastSuccessAt) {
-        syncParts.push(`actualizado hace ${formatRelativeSeconds(Date.now() - myDayLastSuccessAt.getTime())}`);
-      }
-      if (clockHealthMessage) {
-        syncParts.push(clockHealthMessage);
-      }
-      if (myDayLastErrorMessage) {
-        syncParts.push(`error: ${myDayLastErrorMessage}`);
-      }
-
-      syncEl.textContent = syncParts.join(' | ') || 'Falta configurar tournament_start_ts.';
+      phaseEl.textContent = clockHealthMessage || 'Falta configurar tournament_start_ts.';
       statusPillEl.textContent = 'Config invalida';
       statusPillEl.className = 'status-pill status-closed';
       return;
@@ -3228,15 +3192,10 @@
 
     const internalNowMs = snapshot.internalNowMs;
     const tournamentStartMs = Number(snapshot.tournamentStartMs || 0);
-    const realNowMs = snapshot.realNowMs || Date.now();
     const currentBlock = vm.currentBlock || null;
     const beforeTournamentStart = !!tournamentStartMs && internalNowMs < tournamentStartMs;
     const expectedStatus = getExpectedBlockStatus(currentBlock, internalNowMs);
     const expectedLabel = expectedStatus ? formatTournamentStateLabel({ status: expectedStatus }) : 'Sin bloque';
-    const nextMilestone = getNextBlockMilestone(currentBlock, internalNowMs);
-    const snapshotStatus = currentBlock ? String(currentBlock.status || '').trim() : '';
-    const drifted = !!currentBlock && expectedStatus && snapshotStatus && expectedStatus !== snapshotStatus;
-    const lastRunAt = parseCanonicalDateTime(clock && clock.triggerLastRunAt);
 
     if (clockHealth === 'missing_start_ts') {
       clockValueEl.textContent = '--:--:--';
@@ -3247,9 +3206,9 @@
           : formatElapsedClock(internalNowMs - tournamentStartMs)
         : '--:--:--';
     }
-    nextLabelEl.textContent = nextMilestone.label;
-    nextValueEl.textContent = nextMilestone.value;
-    expectedStatusEl.textContent = expectedLabel;
+    phaseEl.textContent = currentBlock
+      ? `Bloque ${currentBlock.id} · ${expectedLabel}`
+      : 'Sin bloque activo';
     if (blockStatusPillEl) {
       blockStatusPillEl.textContent = currentBlock
         ? formatTournamentStateLabel({ status: expectedStatus || currentBlock.status || '' })
@@ -3268,43 +3227,10 @@
     } else if (!snapshot.isRunning) {
       statusPillEl.textContent = 'Pausado';
       statusPillEl.className = 'status-pill status-closed';
-    } else if (drifted) {
-      statusPillEl.textContent = 'Esperando refresh';
-      statusPillEl.className = 'status-pill status-pending';
     } else {
       statusPillEl.textContent = expectedStatus ? expectedLabel : 'Sin bloque';
       statusPillEl.className = expectedStatus ? 'status-pill status-done' : 'status-pill status-closed';
     }
-
-    const syncParts = [];
-    if (internalNowMs) {
-      syncParts.push(`hora interna ${formatClockStamp(internalNowMs)}`);
-    }
-    if (realNowMs) {
-      syncParts.push(`hora real ${formatClockStamp(realNowMs)}`);
-    }
-    if (tournamentStartMs) {
-      syncParts.push(`inicio torneo ${formatClockStamp(tournamentStartMs)}`);
-    }
-    if (myDayLastSuccessAt) {
-      syncParts.push(`actualizado hace ${formatRelativeSeconds(Date.now() - myDayLastSuccessAt.getTime())}`);
-    }
-    if (lastRunAt) {
-      syncParts.push(`ultimo tick ${formatClockTime(lastRunAt)}`);
-    }
-    if (!snapshot.isRunning) {
-      syncParts.push('reloj pausado');
-    }
-    if (clockHealthMessage) {
-      syncParts.push(clockHealthMessage);
-    }
-    if (myDayLastErrorMessage) {
-      syncParts.push(`error: ${myDayLastErrorMessage}`);
-    } else if (drifted) {
-      syncParts.push('El reloj interno ya cruzo un hito; refrescando snapshot...');
-    }
-
-    syncEl.textContent = syncParts.join(' · ');
 
     if (currentBlock && (forceRefreshCheck || expectedStatus !== snapshotState.lastExpectedStatus)) {
       snapshotState.lastExpectedStatus = expectedStatus;
