@@ -1215,7 +1215,14 @@ function buildPublicPhaseLabel(match) {
   const phaseType = String(match.phase_type || '').trim();
   const bracketType = String(match.bracket_type || '').trim();
   const roundNo = Number(match.round_no || 0);
-  const roundLabel = getVisibleRoundLabel_(String(match.round_label || '').trim());
+  const stage = String(match.stage || '').trim().toLowerCase();
+  const stageRoundLabel = (
+    stage === 'doubles_final' ||
+    stage === 'oro_final' ||
+    stage === 'plata_final' ||
+    stage === 'cobre_final'
+  ) ? 'Final' : '';
+  const roundLabel = getVisibleRoundLabel_(String(match.round_label || '').trim()) || stageRoundLabel;
 
   if (phaseType === 'doubles') {
     return roundLabel ? `Dobles - ${roundLabel}` : `Dobles - Ronda ${roundNo || '-'}`;
