@@ -1311,6 +1311,7 @@
 
     const nextVm = Object.assign({}, currentMyDayVm, {
       currentBlock: publicVm && publicVm.currentBlock ? publicVm.currentBlock : currentMyDayVm.currentBlock,
+      tournamentStatus: publicVm && publicVm.tournamentStatus ? publicVm.tournamentStatus : currentMyDayVm.tournamentStatus,
       generatedAt: publicVm && publicVm.generatedAt ? publicVm.generatedAt : currentMyDayVm.generatedAt,
       snapshotVersion: publicVm && publicVm.snapshotVersion ? publicVm.snapshotVersion : currentMyDayVm.snapshotVersion,
     });
@@ -4243,7 +4244,7 @@
 
     select.innerHTML =
       '<option value="">Selecciona para ver tu jornada</option>' +
-      `<option value="${escapeHtml(playerId)}" selected>${escapeHtml(playerLabel)} Â· ${escapeHtml(playerId)}</option>`;
+      `<option value="${escapeHtml(playerId)}" selected>${escapeHtml(playerLabel)}</option>`;
   }
 
   function readSelectedPlayerLabel_(select, playerId) {
@@ -4256,12 +4257,15 @@
 
     const rawLabel = String(option.textContent || option.innerText || '').trim();
     if (!rawLabel) return '';
-    const suffix = ` Ã‚Â· ${normalizedId}`;
-    return rawLabel.endsWith(suffix)
-      ? rawLabel.slice(0, rawLabel.length - suffix.length).trim()
-      : rawLabel;
+    return rawLabel
+      .replace(new RegExp('\\s*[·•|-]\\s*' + escapeRegExp_(normalizedId) + '$'), '')
+      .replace(new RegExp('\\s+' + escapeRegExp_(normalizedId) + '$'), '')
+      .trim();
   }
 
+  function escapeRegExp_(value) {
+    return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
   function saveGroupsPlayerId(playerId) {
     try {
       localStorage.setItem(LOCAL_STORAGE_GROUPS_PLAYER_KEY, String(playerId || ''));
