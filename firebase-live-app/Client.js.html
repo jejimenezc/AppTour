@@ -4168,7 +4168,7 @@
 
     select.innerHTML =
       '<option value="">Selecciona para ver tu jornada</option>' +
-      `<option value="${escapeHtml(playerId)}" selected>${escapeHtml(playerLabel)} - ${escapeHtml(playerId)}</option>`;
+      `<option value="${escapeHtml(playerId)}" selected>${escapeHtml(playerLabel)} Â· ${escapeHtml(playerId)}</option>`;
   }
 
   function readSelectedPlayerLabel_(select, playerId) {
@@ -4181,7 +4181,7 @@
 
     const rawLabel = String(option.textContent || option.innerText || '').trim();
     if (!rawLabel) return '';
-    const suffix = ` - ${normalizedId}`;
+    const suffix = ` Â· ${normalizedId}`;
     return rawLabel.endsWith(suffix)
       ? rawLabel.slice(0, rawLabel.length - suffix.length).trim()
       : rawLabel;
