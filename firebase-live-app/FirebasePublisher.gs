@@ -143,6 +143,19 @@ function publishPlayerRealtimeViewsToFirebase(playerIds) {
   });
 }
 
+function publishAllMyDayViewModelsToFirebase() {
+  const normalizedIds = getCheckedInPlayersForSelector()
+    .map(function (player) {
+      return normalizeRealtimePlayerIdSafe_(player && player.id);
+    })
+    .filter(Boolean)
+    .filter(onlyUnique_);
+
+  return normalizedIds.map(function (playerId) {
+    return publishMyDayViewModelToFirebase(playerId);
+  });
+}
+
 function publishRealtimeDebugForPlayer(playerId) {
   const normalizedPlayerId = normalizeRealtimePlayerId_(playerId);
   const snapshotResult = publishRealtimeSnapshotToFirebase();
@@ -265,6 +278,15 @@ function buildPartidosFirebasePayload_(publicVm) {
         rightLabel: String(match && match.rightLabel || '').trim(),
         matchupLabel: String(match && match.matchupLabel || '').trim(),
         refereeLabel: String(match && match.refereeLabel || '').trim(),
+        playerAId: String(match && match.playerAId || '').trim(),
+        playerBId: String(match && match.playerBId || '').trim(),
+        refereePlayerId: String(match && match.refereePlayerId || '').trim(),
+        playerAPlayerIds: Array.isArray(match && match.playerAPlayerIds) ? match.playerAPlayerIds.map(function (value) {
+          return String(value || '').trim();
+        }).filter(Boolean) : [],
+        playerBPlayerIds: Array.isArray(match && match.playerBPlayerIds) ? match.playerBPlayerIds.map(function (value) {
+          return String(value || '').trim();
+        }).filter(Boolean) : [],
         eventState: sanitizePublicMatchEventStateForFirebase_(match && match.eventState),
         setsA: match && Object.prototype.hasOwnProperty.call(match, 'setsA') ? match.setsA : '',
         setsB: match && Object.prototype.hasOwnProperty.call(match, 'setsB') ? match.setsB : '',

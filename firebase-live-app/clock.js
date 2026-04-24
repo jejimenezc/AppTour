@@ -114,12 +114,16 @@ function runTournamentClockTickWithOptions_(options) {
     const publishResult = shouldPublishRealtime
       ? publishRealtimeSnapshotToFirebase()
       : null;
+    const myDayPublishResults = didPublicBlockHandoff
+      ? publishAllMyDayViewModelsToFirebase()
+      : [];
 
     return {
       ok: true,
       skipped: false,
       tickResult: tickResult,
       publishResult: publishResult,
+      myDayPublishResults: myDayPublishResults,
     };
   } catch (error) {
     const message = error && error.message ? error.message : String(error);

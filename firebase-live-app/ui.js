@@ -122,9 +122,11 @@ function getMyDayViewModel(playerId) {
         }
       : null,
     timeState: buildPublicTimeState_(currentBlock),
-    clock: buildTournamentClockPayload_(),
+    activeBlockId: String(currentBlockId || '').trim(),
     timeline: buildMyDayTimeline(playerId, currentBlock),
+    snapshotVersion: String(Date.now()),
     generatedAt: nowIso(),
+    source: 'gas',
   };
 }
 
@@ -136,17 +138,17 @@ function getMyDayViewModelFromUi(playerId) {
 }
 
 function getAllowedCaptureActions(match, playerId) {
-  const block = getCurrentBlock();
-  const blockStatus = String(block && block.status || '').trim();
-  const isBlockCapturable = blockStatus === 'live' || blockStatus === 'closing';
   const playerContext = buildPlayerMatchContext(match, playerId);
   const isReferee = playerContext.isReferee;
   const isPlayer = playerContext.isPlayerA || playerContext.isPlayerB;
+  const eventState = buildPublicMatchEventState_(match);
+  const isClosed = !!(eventState.resultSubmitted || eventState.autoClosed);
+  const canCapture = !isClosed && (isReferee || isPlayer);
 
   return {
-    canOpen: isBlockCapturable && (isReferee || isPlayer),
-    canSubmitFinal: isBlockCapturable && (isReferee || isPlayer),
-    canSubmitClosingState: isBlockCapturable && (isReferee || isPlayer),
+    canOpen: canCapture,
+    canSubmitFinal: canCapture,
+    canSubmitClosingState: canCapture,
     canViewOnly: false,
   };
 }
@@ -765,21 +767,21 @@ function setTournamentStartTsFromUi(rawValue) {
   const normalized = normalizeTournamentStartInput_(rawValue);
   setConfigValue('tournament_start_ts', normalized, 'Hora base del torneo');
   resetTournamentInternalClock(normalized);
-  return publishRealtimeSnapshotAfterMutation_(getAdminControlViewModel());
+  return publishStructuralRealtimeAfterMutation_(getAdminControlViewModel());
 }
 
 function setTournamentStartNowFromUi() {
   const value = nowIso();
   setConfigValue('tournament_start_ts', value, 'Hora base del torneo');
   resetTournamentInternalClock(value);
-  return publishRealtimeSnapshotAfterMutation_(getAdminControlViewModel());
+  return publishStructuralRealtimeAfterMutation_(getAdminControlViewModel());
 }
 
 function initializeTournamentFlowV2FromUi() {
   initializeTournamentFlowV2();
   const vm = getAdminControlViewModel();
   vm.lastActionMessage = 'Reset V2 aplicado. Base limpia, ventana de dobles abierta y cronometro pausado en 00:00:00.';
-  return publishRealtimeSnapshotAfterMutation_(vm);
+  return publishStructuralRealtimeAfterMutation_(vm);
 }
 
 function seedDemoDoublesConfigFromUi() {
@@ -800,7 +802,7 @@ function generateDoublesFixtureFromUi() {
   vm.lastActionMessage = matchCount
     ? `Fixture de dobles generado con ${matchCount} partidos. Ahora puedes programar el torneo.`
     : 'El fixture de dobles ya estaba generado.';
-  return publishRealtimeSnapshotAfterMutation_(vm);
+  return publishStructuralRealtimeAfterMutation_(vm);
 }
 
 function programDoublesTournamentFromUi() {
@@ -822,7 +824,7 @@ function programDoublesTournamentFromUi() {
 
   const vm = getAdminControlViewModel();
   vm.lastActionMessage = `Torneo programado. Bloque ${blockId} queda scheduled con cronometro en 00:00:00 y pausado.`;
-  return publishRealtimeSnapshotAfterMutation_(vm);
+  return publishStructuralRealtimeAfterMutation_(vm);
 }
 
 function runTournamentClockNowFromUi() {
@@ -977,7 +979,7 @@ function confirmSinglesGroupsFromUi() {
   confirmSinglesGroupsAndStartGroupStage();
   const vm = getAdminControlViewModel();
   vm.lastActionMessage = 'Grupos confirmados. Fase de grupos iniciada.';
-  return publishRealtimeSnapshotAfterMutation_(vm);
+  return publishStructuralRealtimeAfterMutation_(vm);
 }
 
 function scheduleDoublesFinalFromUi() {
@@ -988,7 +990,7 @@ function scheduleDoublesFinalFromUi() {
 
   const vm = getAdminControlViewModel();
   vm.lastActionMessage = `Final de dobles programada en bloque ${blockId}.`;
-  return publishRealtimeSnapshotAfterMutation_(vm);
+  return publishStructuralRealtimeAfterMutation_(vm);
 }
 
 function startDemoTournamentNowFromUi() {
@@ -1005,6 +1007,7 @@ function startDemoTournamentNowFromUi() {
 
   const blockId = setupDoublesStageFromCut();
   runTickAndPublishRealtime();
+  publishAllMyDayViewModelsToFirebase();
 
   const vm = getAdminControlViewModel();
   vm.lastActionMessage = blockId
@@ -1018,6 +1021,12 @@ function publishRealtimeSnapshotAfterMutation_(result, playerIds) {
   if (playerIds && playerIds.length) {
     publishPlayerRealtimeViewsToFirebase(playerIds);
   }
+  return result;
+}
+
+function publishStructuralRealtimeAfterMutation_(result) {
+  publishRealtimeSnapshotToFirebase();
+  publishAllMyDayViewModelsToFirebase();
   return result;
 }
 
@@ -1177,6 +1186,8 @@ function mapMatchForPublicView(match, currentBlock) {
   const leftLabel = resolveCompetitorLabel(match.player_a_id, phaseType);
   const rightLabel = resolveCompetitorLabel(match.player_b_id, phaseType);
   const refereeLabel = resolvePlayerDisplayName(match.referee_player_id);
+  const playerAPlayerIds = resolveMatchParticipantPlayerIds_(match.player_a_id, phaseType);
+  const playerBPlayerIds = resolveMatchParticipantPlayerIds_(match.player_b_id, phaseType);
 
   return {
     matchId: String(match.match_id || ''),
@@ -1187,10 +1198,33 @@ function mapMatchForPublicView(match, currentBlock) {
     rightLabel,
     matchupLabel: buildMatchupLabel(match),
     refereeLabel: refereeLabel ? `Árbitro: ${refereeLabel}` : '',
+    playerAId: String(match.player_a_id || '').trim(),
+    playerBId: String(match.player_b_id || '').trim(),
+    refereePlayerId: String(match.referee_player_id || '').trim(),
+    playerAPlayerIds: playerAPlayerIds,
+    playerBPlayerIds: playerBPlayerIds,
     eventState: buildPublicMatchEventState_(match),
     setsA: valueForClient(match.sets_a),
     setsB: valueForClient(match.sets_b),
   };
+}
+
+function resolveMatchParticipantPlayerIds_(entryId, phaseType) {
+  const normalizedId = String(entryId || '').trim();
+  if (!normalizedId) return [];
+
+  if (String(phaseType || '').trim() === 'doubles') {
+    const team = getDoublesTeamById(normalizedId);
+    if (!team) return [];
+
+    return [team.player_1_id, team.player_2_id]
+      .map(function (playerId) {
+        return String(playerId || '').trim();
+      })
+      .filter(Boolean);
+  }
+
+  return [normalizedId];
 }
 
 function buildPublicMatchEventState_(match) {

@@ -1,5 +1,6 @@
 <script>
   const PUBLIC_REALTIME_BOOT_TIMEOUT_MS = 3000;
+  const MYDAY_REALTIME_BOOT_TIMEOUT_MS = 1200;
   const MYDAY_REFRESH_MS = 5000;
   const CLIENT_CLOCK_TICK_MS = 1000;
   const LOCAL_STORAGE_PLAYER_KEY = 'ttm_selected_player_id';
@@ -42,6 +43,8 @@
   let myDayLastErrorMessage = '';
   let myDayClockTimer = null;
   let myDayClockSnapshot = null;
+  let myDayRealtimeSnapshotReceived = false;
+  let myDayRealtimeBootstrapTimer = null;
   let doublesLoadRequestSeq = 0;
   let doublesLoadRequestActive = 0;
   let doublesIsLoading = false;
@@ -168,6 +171,11 @@
       loadSinglesGroupsConfig({ silent: true });
     }
     if (nextScreen === 'myday') {
+      const savedPlayerId = getSavedPlayerId();
+      if (savedPlayerId) {
+        subscribeRealtimeViewModels(savedPlayerId);
+        startMyDayRealtimeBootstrap_(savedPlayerId, true);
+      }
       refreshCurrentPlayerExperience({ silent: true });
     }
     if (nextScreen === 'doubles') {
@@ -703,6 +711,8 @@
     realtimeMyDayRef.on('value', function (snapshot) {
       const vm = snapshot ? snapshot.val() : null;
       if (!vm) return;
+      myDayRealtimeSnapshotReceived = true;
+      clearMyDayRealtimeBootstrapTimer_();
       myDayLastSuccessAt = new Date();
       myDayLastErrorMessage = '';
       renderMyDay(vm);
@@ -717,6 +727,31 @@
       realtimeMyDayRef = null;
     }
     realtimeMyDayPlayerId = '';
+    myDayRealtimeSnapshotReceived = false;
+    clearMyDayRealtimeBootstrapTimer_();
+  }
+
+  function clearMyDayRealtimeBootstrapTimer_() {
+    if (myDayRealtimeBootstrapTimer) {
+      window.clearTimeout(myDayRealtimeBootstrapTimer);
+      myDayRealtimeBootstrapTimer = null;
+    }
+  }
+
+  function startMyDayRealtimeBootstrap_(playerId, silent) {
+    clearMyDayRealtimeBootstrapTimer_();
+    myDayRealtimeSnapshotReceived = false;
+
+    if (!db) {
+      loadMyDayForPlayer(playerId, { silent: !!silent, forceServer: true, subscribeAfterLoad: true });
+      return;
+    }
+
+    myDayRealtimeBootstrapTimer = window.setTimeout(function () {
+      myDayRealtimeBootstrapTimer = null;
+      if (myDayRealtimeSnapshotReceived) return;
+      loadMyDayForPlayer(playerId, { silent: !!silent, forceServer: true, subscribeAfterLoad: true });
+    }, MYDAY_REALTIME_BOOT_TIMEOUT_MS);
   }
 
   function subscribeRealtimeDoubles(playerId) {
@@ -1238,25 +1273,101 @@
   }
 
   function syncRealtimeMatchIntoMyDay(matches, publicVm) {
-    if (!currentMyDayVm || !currentMyDayVm.currentMatch) return;
+    if (!currentMyDayVm) return;
+    const playerId = String(currentMyDayVm.player && currentMyDayVm.player.id || getSavedPlayerId() || '').trim();
 
-    const currentMatchId = String(currentMyDayVm.currentMatch.matchId || currentMyDayVm.currentMatch.id || '').trim();
-    if (!currentMatchId) return;
-
-    const updatedMatch = matches.find(function (match) {
-      const matchId = String(match && (match.matchId || match.id) || '').trim();
-      return matchId === currentMatchId;
-    });
-
-    if (!updatedMatch) return;
-
-    currentMyDayVm = Object.assign({}, currentMyDayVm, {
+    const nextVm = Object.assign({}, currentMyDayVm, {
       currentBlock: publicVm && publicVm.currentBlock ? publicVm.currentBlock : currentMyDayVm.currentBlock,
+      timeState: publicVm && publicVm.timeState ? publicVm.timeState : currentMyDayVm.timeState,
       generatedAt: publicVm && publicVm.generatedAt ? publicVm.generatedAt : currentMyDayVm.generatedAt,
-      currentMatch: Object.assign({}, currentMyDayVm.currentMatch, mapRealtimeMatchToMyDayMatch(currentMyDayVm.currentMatch, updatedMatch)),
+      snapshotVersion: publicVm && publicVm.snapshotVersion ? publicVm.snapshotVersion : currentMyDayVm.snapshotVersion,
     });
+
+    const derivedMatch = playerId ? buildMyDayCurrentMatchFromPublicMatches_(playerId, matches) : null;
+
+    if (currentMyDayVm.currentMatch) {
+      const currentMatchId = String(currentMyDayVm.currentMatch.matchId || currentMyDayVm.currentMatch.id || '').trim();
+      const updatedMatch = currentMatchId
+        ? matches.find(function (match) {
+            const matchId = String(match && (match.matchId || match.id) || '').trim();
+            return matchId === currentMatchId;
+          })
+        : null;
+
+      if (updatedMatch) {
+        nextVm.currentMatch = Object.assign(
+          {},
+          currentMyDayVm.currentMatch,
+          mapRealtimeMatchToMyDayMatch(currentMyDayVm.currentMatch, updatedMatch)
+        );
+      } else {
+        nextVm.currentMatch = derivedMatch;
+      }
+    } else if (derivedMatch) {
+      nextVm.currentMatch = derivedMatch;
+    }
+
+    currentMyDayVm = nextVm;
 
     renderMyDay(currentMyDayVm);
+  }
+
+  function buildMyDayCurrentMatchFromPublicMatches_(playerId, matches) {
+    const actorId = String(playerId || '').trim();
+    if (!actorId) return null;
+
+    const sourceMatch = (Array.isArray(matches) ? matches : []).find(function (match) {
+      return isPlayerInRealtimePublicMatch_(match, actorId);
+    });
+    if (!sourceMatch) return null;
+
+    const playerAIds = normalizeRealtimeParticipantIds_(sourceMatch.playerAPlayerIds);
+    const playerBIds = normalizeRealtimeParticipantIds_(sourceMatch.playerBPlayerIds);
+    const refereePlayerId = String(sourceMatch.refereePlayerId || '').trim();
+    const eventState = normalizeMyDayEventState_(sourceMatch.eventState);
+    const isPlayerA = playerAIds.indexOf(actorId) !== -1;
+    const isPlayerB = playerBIds.indexOf(actorId) !== -1;
+    const isReferee = refereePlayerId === actorId;
+    const isByeAdvance = !!eventState.autoClosed && (
+      (isPlayerA && !playerBIds.length) ||
+      (isPlayerB && !playerAIds.length)
+    );
+
+    return {
+      matchId: String(sourceMatch.matchId || sourceMatch.id || '').trim(),
+      tableNo: sourceMatch.tableNo != null ? sourceMatch.tableNo : '',
+      phaseLabel: String(sourceMatch.phaseLabel || '').trim(),
+      leftLabel: String(sourceMatch.leftLabel || '').trim(),
+      rightLabel: String(sourceMatch.rightLabel || '').trim(),
+      matchupLabel: String(sourceMatch.matchupLabel || '').trim(),
+      isReferee: isReferee,
+      isPlayerA: isPlayerA,
+      isPlayerB: isPlayerB,
+      eventState: eventState,
+      isByeAdvance: isByeAdvance,
+      allowedCaptureActions: deriveCaptureActionsFromRealtimeEventState(eventState),
+    };
+  }
+
+  function isPlayerInRealtimePublicMatch_(match, playerId) {
+    const actorId = String(playerId || '').trim();
+    if (!actorId || !match || typeof match !== 'object') return false;
+
+    const playerAIds = normalizeRealtimeParticipantIds_(match.playerAPlayerIds);
+    const playerBIds = normalizeRealtimeParticipantIds_(match.playerBPlayerIds);
+    const refereePlayerId = String(match.refereePlayerId || '').trim();
+
+    return playerAIds.indexOf(actorId) !== -1 ||
+      playerBIds.indexOf(actorId) !== -1 ||
+      refereePlayerId === actorId;
+  }
+
+  function normalizeRealtimeParticipantIds_(values) {
+    return Array.isArray(values)
+      ? values.map(function (value) {
+          return String(value || '').trim();
+        }).filter(Boolean)
+      : [];
   }
 
   function mapRealtimeMatchToMyDayMatch(baseMatch, realtimeMatch) {
@@ -2958,23 +3069,21 @@
 
     savePlayerId(playerId);
     subscribeRealtimeViewModels(playerId);
+    startMyDayRealtimeBootstrap_(playerId, !!isAutoLoad);
     loadDoublesConfig({ silent: true });
-    loadMyDayForPlayer(playerId, {
-      silent: !!isAutoLoad,
-      forceServer: !db || !currentMyDayVm || String(currentMyDayVm.player && currentMyDayVm.player.id || '') !== playerId,
-    });
   }
 
   function loadMyDayForPlayer(playerId, options) {
     const opts = options || {};
     const silent = !!opts.silent;
     const forceServer = !!opts.forceServer;
+    const subscribeAfterLoad = opts.subscribeAfterLoad !== false;
     const root = document.getElementById('myday-content');
     if (!root || !playerId || myDayLoadInFlight) return;
 
     if (db) {
-      subscribeRealtimeMyDay(playerId);
       if (!forceServer) {
+        subscribeRealtimeMyDay(playerId);
         return;
       }
     }
@@ -2991,6 +3100,9 @@
         myDayLastSuccessAt = new Date();
         myDayLastErrorMessage = '';
         renderMyDay(vm);
+        if (db && subscribeAfterLoad) {
+          subscribeRealtimeViewModels(playerId);
+        }
       })
       .withFailureHandler(function (error) {
         myDayLoadInFlight = false;
@@ -3116,13 +3228,13 @@
             <div>
               <div class="stat-label">Bloque actual</div>
               <div class="stat-value" style="font-size: 20px;">
-                ${vm.currentBlock ? `Bloque ${escapeHtml(vm.currentBlock.id)}` : 'Sin bloque activo'}
+                ${derivedVm.currentBlock ? `Bloque ${escapeHtml(derivedVm.currentBlock.id)}` : 'Sin bloque activo'}
               </div>
               <div class="helper" style="margin-top: 6px;">
                 ${derivedVm.currentBlock ? escapeHtml(derivedVm.currentBlock.phaseLabel || '') : 'No hay fase en curso'}
               </div>
             </div>
-            <span class="status-pill status-done" id="myday-block-status-pill">${escapeHtml(formatTournamentStateLabel(derivedVm.currentBlock))}</span>
+            <span class="status-pill status-done" id="myday-block-status-pill">${escapeHtml(derivedVm.currentBlock && derivedVm.currentBlock.visualStatusLabel ? derivedVm.currentBlock.visualStatusLabel : formatTournamentStateLabel(derivedVm.currentBlock))}</span>
           </div>
         </div>
 
@@ -3170,9 +3282,8 @@
     const vm = currentMyDayVm;
     const snapshotState = myDayClockSnapshot || {};
     const snapshot = getProjectedClockSnapshot_();
-    const clock = vm && vm.clock ? vm.clock : null;
-    const clockHealth = String(clock && clock.clockHealth || snapshot && snapshot.health || 'ok');
-    const clockHealthMessage = String(clock && clock.clockHealthMessage || snapshot && snapshot.healthMessage || '');
+    const clockHealth = String(snapshot && snapshot.health || 'ok');
+    const clockHealthMessage = String(snapshot && snapshot.healthMessage || '');
 
     if (!vm || !snapshot || (!snapshot.internalNowMs && clockHealth !== 'missing_start_ts')) {
       clockValueEl.textContent = '--:--:--';
