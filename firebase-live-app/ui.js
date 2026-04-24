@@ -86,6 +86,7 @@ function getMyDayViewModel(playerId) {
   }
 
   const playerContext = currentMatch ? buildPlayerMatchContext(currentMatch, playerId) : null;
+  const itinerary = buildMyDayItinerary(playerId, currentBlock);
 
   return {
     player: {
@@ -123,7 +124,8 @@ function getMyDayViewModel(playerId) {
       : null,
     timeState: buildPublicTimeState_(currentBlock),
     activeBlockId: String(currentBlockId || '').trim(),
-    timeline: buildMyDayTimeline(playerId, currentBlock),
+    itinerary: itinerary,
+    timeline: itinerary,
     snapshotVersion: String(Date.now()),
     generatedAt: nowIso(),
     source: 'gas',
@@ -574,7 +576,7 @@ function compareDoublesRows_(a, b) {
   return String(a.name || '').localeCompare(String(b.name || ''));
 }
 
-function buildMyDayTimeline(playerId, currentBlock) {
+function buildMyDayItinerary(playerId, currentBlock) {
   const currentBlockId = currentBlock ? Number(currentBlock.block_id || 0) : 0;
   const blocks = getBlocksSorted();
   const upcomingBlocks = blocks.filter(block => {
@@ -585,10 +587,10 @@ function buildMyDayTimeline(playerId, currentBlock) {
 
   const blockEntries = upcomingBlocks
     .slice(0, 4)
-    .map(block => buildMyDayBlockTimelineEntry(block, playerId));
+    .map(block => buildMyDayItineraryBlockEntry_(block, playerId));
 
   const timeline = [...blockEntries];
-  const syntheticEntries = buildMyDaySyntheticTimelineEntries(blocks);
+  const syntheticEntries = buildMyDaySyntheticItineraryEntries_(blocks);
 
   syntheticEntries.forEach(entry => {
     if (timeline.length < 6) timeline.push(entry);
@@ -598,15 +600,25 @@ function buildMyDayTimeline(playerId, currentBlock) {
 }
 
 function buildMyDayBlockTimelineEntry(block, playerId) {
+  return buildMyDayItineraryBlockEntry_(block, playerId);
+}
+
+function buildMyDayItineraryBlockEntry_(block, playerId) {
   const blockId = String(block.block_id || '').trim();
   const matches = getMatchesByBlock(blockId);
   const match = matches.find(item => isPlayerInMatch(item, playerId));
 
   if (!match) {
     return {
-      kind: 'block',
+      kind: 'future_block',
+      status: 'future',
+      blockId: blockId,
+      phaseType: String(block.phase_type || '').trim(),
+      phaseLabel: String(block.phase_label || '').trim(),
+      matchId: '',
+      placeholder: buildMyDayBlockPlaceholder_(block),
       title: `Bloque ${blockId} · Espera`,
-      primary: 'Sin asignación aún',
+      primary: buildMyDayBlockPlaceholder_(block),
       secondary: String(block.phase_label || ''),
       tone: 'idle',
     };
@@ -621,7 +633,14 @@ function buildMyDayBlockTimelineEntry(block, playerId) {
       : 'Juega';
 
   return {
-    kind: 'block',
+    kind: 'future_block',
+    status: 'future',
+    blockId: blockId,
+    phaseType: String(block.phase_type || '').trim(),
+    phaseLabel: String(block.phase_label || '').trim(),
+    matchId: String(match.match_id || '').trim(),
+    placeholder: '',
+    role: isBye ? 'bye' : context.isReferee ? 'referee' : 'player',
     title: `Bloque ${blockId} · ${roleLabel}`,
     primary: buildTimelinePrimaryLabel_(match),
     secondary: String(block.phase_label || ''),
@@ -630,6 +649,10 @@ function buildMyDayBlockTimelineEntry(block, playerId) {
 }
 
 function buildMyDaySyntheticTimelineEntries(blocks) {
+  return buildMyDaySyntheticItineraryEntries_(blocks);
+}
+
+function buildMyDaySyntheticItineraryEntries_(blocks) {
   const entries = [];
   const tournamentStatus = String(getConfigValue('tournament_status') || '').trim();
   const hasGroupsBlocks = blocks.some(block => String(block.phase_type || '').trim() === 'groups');
@@ -638,6 +661,12 @@ function buildMyDaySyntheticTimelineEntries(blocks) {
   if (!hasGroupsBlocks) {
     entries.push({
       kind: 'checkpoint',
+      status: 'future',
+      blockId: '',
+      phaseType: 'groups',
+      phaseLabel: 'Singles - Grupos',
+      matchId: '',
+      placeholder: 'Pendiente confirmacion',
       title: 'Checkpoint · Grupos singles',
       primary: 'Pendiente confirmación',
       secondary: 'Se asignará tras confirmar grupos',
@@ -648,6 +677,12 @@ function buildMyDaySyntheticTimelineEntries(blocks) {
   if (!hasSinglesBlocks) {
     entries.push({
       kind: 'checkpoint',
+      status: 'future',
+      blockId: '',
+      phaseType: 'singles',
+      phaseLabel: 'Singles - Llaves',
+      matchId: '',
+      placeholder: 'Cruce por definir',
       title: 'Fase singles · Por definir',
       primary: 'Sin bloque asignado aún',
       secondary: hasGroupsBlocks
@@ -660,6 +695,12 @@ function buildMyDaySyntheticTimelineEntries(blocks) {
   if (isReservedDoublesFinalPendingBlock() || tournamentStatus === 'awaiting_doubles_final') {
     entries.push({
       kind: 'checkpoint',
+      status: 'future',
+      blockId: '',
+      phaseType: 'doubles',
+      phaseLabel: 'Dobles - Final',
+      matchId: '',
+      placeholder: 'Final de dobles por definir',
       title: 'Final de dobles · Por definir',
       primary: 'Pendiente programación',
       secondary: 'Se programará después de semifinales de singles',
@@ -670,6 +711,12 @@ function buildMyDaySyntheticTimelineEntries(blocks) {
   if (areReservedSinglesFinalsPendingBlock() || tournamentStatus === 'awaiting_singles_final') {
     entries.push({
       kind: 'checkpoint',
+      status: 'future',
+      blockId: '',
+      phaseType: 'singles',
+      phaseLabel: 'Finales de singles',
+      matchId: '',
+      placeholder: 'Finales por definir',
       title: 'Finales de singles · Por definir',
       primary: 'Pendiente programación',
       secondary: 'Se asignarán tras resolver final de dobles',
@@ -689,6 +736,16 @@ function buildTimelinePrimaryLabel_(match) {
   }
 
   return matchupLabel;
+}
+
+function buildMyDayBlockPlaceholder_(block) {
+  const phaseType = String(block.phase_type || '').trim().toLowerCase();
+  const phaseLabel = String(block.phase_label || '').trim();
+
+  if (phaseType === 'groups') return 'Partido de grupos por definir';
+  if (phaseType === 'singles') return `Cruce por definir${phaseLabel ? ` · ${phaseLabel}` : ''}`;
+  if (phaseType === 'doubles') return `Partido por definir${phaseLabel ? ` · ${phaseLabel}` : ''}`;
+  return phaseLabel || 'Compromiso por definir';
 }
 
 function getAdminControlViewModel() {

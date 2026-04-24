@@ -3219,7 +3219,7 @@
       `;
     }
 
-    const timelineHtml = renderMyDayTimeline(vm.timeline || []);
+    const itineraryHtml = renderMyDayTimeline(vm.itinerary || vm.timeline || []);
 
     root.innerHTML = `
       <div class="stack">
@@ -3247,7 +3247,7 @@
 
         ${matchCardHtml}
 
-        ${timelineHtml}
+        ${itineraryHtml}
       </div>
     `;
 
@@ -3453,7 +3453,7 @@
       <div class="stack">
         <div class="card-soft">
           <div class="stat-label">Itinerario</div>
-          <div class="helper" style="margin-top: 6px;">Próximos bloques, checkpoints y fases esperadas.</div>
+          <div class="helper" style="margin-top: 6px;">Proximos bloques y checkpoints del torneo para este jugador.</div>
         </div>
         ${cardsHtml}
       </div>
