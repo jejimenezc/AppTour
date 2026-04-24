@@ -1189,19 +1189,15 @@
 
   function renderPublicMatches(vm) {
     const root = document.getElementById('public-screen-content');
-    const emptyMessage = 'Esperando asignación de mesas';
+    const matches = Array.isArray(vm && vm.matches) ? vm.matches : [];
+    const emptyMessage = getPublicEmptyStateMessage_(vm);
 
-    if (!vm.currentBlock) {
+    if (shouldRenderPublicEmptyState_(vm, matches)) {
       root.innerHTML = `<div class="empty">${emptyMessage}</div>`;
       return;
     }
 
-    if (!vm.matches || vm.matches.length === 0) {
-      root.innerHTML = `<div class="empty">${emptyMessage}</div>`;
-      return;
-    }
-
-    const html = vm.matches.map(function (match) {
+    const html = matches.map(function (match) {
       return `
         <article class="match-item">
           <div class="row-between">
@@ -1223,7 +1219,47 @@
     }).join('');
 
     root.innerHTML = `<div class="match-list">${html}</div>`;
-    enhancePublicMatchups(root, vm.matches);
+    enhancePublicMatchups(root, matches);
+  }
+
+  function shouldRenderPublicEmptyState_(vm, matches) {
+    const tournamentStatus = String(vm && vm.tournamentStatus || '').trim();
+    if (tournamentStatus === 'awaiting_singles_group_confirmation') return true;
+    if (tournamentStatus === 'awaiting_doubles_final') return true;
+    if (tournamentStatus === 'awaiting_singles_final') return true;
+    if (tournamentStatus === 'finished') return true;
+    if (!vm || !vm.currentBlock) return true;
+    if (!matches || !matches.length) return true;
+    return !matches.some(isRenderablePublicMatch_);
+  }
+
+  function getPublicEmptyStateMessage_(vm) {
+    const tournamentStatus = String(vm && vm.tournamentStatus || '').trim();
+
+    if (tournamentStatus === 'awaiting_singles_group_confirmation') {
+      return 'Esperando confirmación de grupos';
+    }
+
+    if (tournamentStatus === 'awaiting_doubles_final' || tournamentStatus === 'awaiting_singles_final') {
+      return 'Esperando programación de finales';
+    }
+
+    if (tournamentStatus === 'finished') {
+      return 'Torneo finalizado';
+    }
+
+    return 'Esperando asignación de mesas';
+  }
+
+  function isRenderablePublicMatch_(match) {
+    if (!match || typeof match !== 'object') return false;
+
+    const matchupLabel = String(match.matchupLabel || '').trim();
+    const leftLabel = String(match.leftLabel || '').trim();
+    const rightLabel = String(match.rightLabel || '').trim();
+    const tableNo = String(match.tableNo || '').trim();
+
+    return !!(matchupLabel || leftLabel || rightLabel || tableNo);
   }
 
   function enhancePublicMatchups(root, matches) {
