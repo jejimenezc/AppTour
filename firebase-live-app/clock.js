@@ -652,6 +652,7 @@ function finishCurrentBlockAndMoveNext(blockId) {
     }
 
     if (areAllSinglesFinalsReserved()) {
+      pauseTournamentInternalClock();
       setConfigValue('current_block_id', '', 'Sin bloque activo esperando finales de singles');
       setConfigValue('tournament_status', 'awaiting_singles_final', 'Finales de singles reservadas');
       return;
@@ -670,6 +671,7 @@ function finishCurrentBlockAndMoveNext(blockId) {
         return;
       }
 
+      pauseTournamentInternalClock();
       setConfigValue('current_block_id', '', 'Sin bloque activo');
       setConfigValue('tournament_status', 'awaiting_singles_final', 'Final de dobles resuelta; pendientes finales de singles');
       return;

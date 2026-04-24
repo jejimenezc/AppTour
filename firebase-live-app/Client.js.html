@@ -2281,7 +2281,9 @@
   function updateAdminToggleClockButton(vm) {
     const button = document.getElementById('admin-toggle-clock-button');
     if (!button) return;
-    const enabled = !!(vm && vm.clockIsRunning);
+    const enabled = vm && vm.timeState
+      ? String(vm.timeState.timerStatus || '').trim() === 'running'
+      : !!(vm && vm.clockIsRunning);
     button.textContent = enabled ? 'Pausar cronometro' : 'Iniciar cronometro';
   }
 
@@ -2406,6 +2408,11 @@
         .withSuccessHandler(function (result) {
           if (result && result.timeState) {
             updateAppHeaderClockSnapshot(result.timeState);
+            if (currentAdminVm) {
+              currentAdminVm.timeState = result.timeState;
+              currentAdminVm.clockIsRunning = String(result.timeState.timerStatus || '').trim() === 'running';
+            }
+            updateAdminToggleClockButton(currentAdminVm || { timeState: result.timeState });
           }
           if (result && result.tickResult && result.tickResult.currentBlockStatus) {
             controlHeartbeatLeaseInfo = Object.assign({}, controlHeartbeatLeaseInfo || {}, {
