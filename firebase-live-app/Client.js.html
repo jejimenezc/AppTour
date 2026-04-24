@@ -4,6 +4,7 @@
   const MYDAY_REFRESH_MS = 5000;
   const CLIENT_CLOCK_TICK_MS = 1000;
   const LOCAL_STORAGE_PLAYER_KEY = 'ttm_selected_player_id';
+  const LOCAL_STORAGE_PLAYER_LABEL_KEY = 'ttm_selected_player_label';
   const LOCAL_STORAGE_GROUPS_PLAYER_KEY = 'ttm_groups_selected_player_id';
   const LOCAL_STORAGE_SCREEN_KEY = 'ttm_active_screen';
   const LOCAL_STORAGE_TIME_FAST_PATH_KEY = 'ttm_time_fast_path_v1';
@@ -1310,7 +1311,6 @@
 
     const nextVm = Object.assign({}, currentMyDayVm, {
       currentBlock: publicVm && publicVm.currentBlock ? publicVm.currentBlock : currentMyDayVm.currentBlock,
-      timeState: publicVm && publicVm.timeState ? publicVm.timeState : currentMyDayVm.timeState,
       generatedAt: publicVm && publicVm.generatedAt ? publicVm.generatedAt : currentMyDayVm.generatedAt,
       snapshotVersion: publicVm && publicVm.snapshotVersion ? publicVm.snapshotVersion : currentMyDayVm.snapshotVersion,
     });
@@ -1377,7 +1377,6 @@
       isPlayerB: isPlayerB,
       eventState: eventState,
       isByeAdvance: isByeAdvance,
-      allowedCaptureActions: deriveCaptureActionsFromRealtimeEventState(eventState),
     };
   }
 
@@ -1415,7 +1414,6 @@
       matchupLabel: realtimeMatch && realtimeMatch.matchupLabel ? realtimeMatch.matchupLabel : baseMatch.matchupLabel,
       eventState: nextEventState,
       isByeAdvance: typeof realtimeMatch.isByeAdvance === 'boolean' ? realtimeMatch.isByeAdvance : baseMatch.isByeAdvance,
-      allowedCaptureActions: Object.assign({}, baseMatch.allowedCaptureActions, deriveCaptureActionsFromRealtimeEventState(nextEventState)),
     };
   }
 
@@ -1430,17 +1428,6 @@
       needsReview: !!source.needsReview,
       resultMode: String(source.resultMode || '').trim(),
       closingState: String(source.closingState || '').trim(),
-    };
-  }
-
-  function deriveCaptureActionsFromRealtimeEventState(eventState) {
-    const state = normalizeMyDayEventState_(eventState);
-    const isClosed = state.resultSubmitted || state.autoClosed;
-
-    return {
-      canOpen: !isClosed,
-      canSubmitFinal: !isClosed,
-      canSubmitClosingState: !isClosed,
     };
   }
 
@@ -1674,6 +1661,8 @@
   }
 
   function loadPlayerSelector() {
+    hydratePlayerSelectorFromStorage_();
+
     if (db) {
       subscribeRealtimePlayerSelectorOptions_();
       startPlayerSelectorRealtimeBootstrap_();
@@ -2530,15 +2519,6 @@
     return Object.assign({}, baseVm, {
       currentBlock: currentBlock,
       currentMatch: currentMatch,
-      timeState: Object.assign({}, baseVm.timeState || {}, {
-        currentPhase: expectedBlockStatus,
-        phaseRemainingMs: Number(projectedClock.phaseRemainingMs || 0),
-        tournamentElapsedMs: Number(projectedClock.tournamentElapsedMs || 0),
-        tournamentNowTs: formatClockStamp(projectedClock.internalNowMs),
-        serverNowMs: projectedClock.realNowMs,
-        serverNowTs: formatClockStamp(projectedClock.realNowMs),
-        timerStatus: projectedClock.isRunning ? 'running' : 'paused',
-      }),
     });
   }
 
@@ -3146,6 +3126,12 @@
 
     if (savedPlayerId && players.some(p => p.id === savedPlayerId)) {
       select.value = savedPlayerId;
+      const selectedPlayer = players.find(function (player) {
+        return player.id === savedPlayerId;
+      });
+      if (selectedPlayer) {
+        savePlayerSelectionLabel_(selectedPlayer.name);
+      }
       const currentSelectedId = String(currentMyDayVm && currentMyDayVm.player && currentMyDayVm.player.id || '').trim();
       if (currentSelectedId !== savedPlayerId) {
         loadMyDayFromSelect(true);
@@ -3181,6 +3167,7 @@
     }
 
     savePlayerId(playerId);
+    savePlayerSelectionLabel_(readSelectedPlayerLabel_(select, playerId));
     subscribeRealtimeViewModels(playerId);
     startMyDayRealtimeBootstrap_(playerId, !!isAutoLoad);
     loadDoublesConfig({ silent: true });
@@ -3260,14 +3247,17 @@
   }
 
   function renderMyDay(vm) {
-    currentMyDayVm = vm;
-    updateAppHeaderClockSnapshot(vm && vm.timeState ? vm.timeState : null);
+    const safeVm = vm && typeof vm === 'object' ? Object.assign({}, vm) : vm;
+    if (safeVm && Object.prototype.hasOwnProperty.call(safeVm, 'timeState')) {
+      delete safeVm.timeState;
+    }
+    currentMyDayVm = safeVm;
     myDayClockSnapshot = {
       lastPhaseKey: '',
     };
     renderMyDayDoublesEntryCard();
 
-    const derivedVm = buildMyDayVmForClientTime_(vm);
+    const derivedVm = buildMyDayVmForClientTime_(safeVm);
 
     const root = document.getElementById('myday-content');
     const playerRoleUi = getMyDayPlayerRoleUi(derivedVm);
@@ -4150,6 +4140,51 @@
     } catch (e) {
       return '';
     }
+  }
+
+  function savePlayerSelectionLabel_(playerLabel) {
+    try {
+      localStorage.setItem(LOCAL_STORAGE_PLAYER_LABEL_KEY, String(playerLabel || ''));
+    } catch (e) {
+      console.warn('No se pudo guardar player_label en localStorage', e);
+    }
+  }
+
+  function getSavedPlayerSelectionLabel_() {
+    try {
+      return localStorage.getItem(LOCAL_STORAGE_PLAYER_LABEL_KEY) || '';
+    } catch (e) {
+      return '';
+    }
+  }
+
+  function hydratePlayerSelectorFromStorage_() {
+    const select = document.getElementById('my-player-select');
+    if (!select) return;
+
+    const playerId = String(getSavedPlayerId() || '').trim();
+    const playerLabel = String(getSavedPlayerSelectionLabel_() || '').trim();
+    if (!playerId || !playerLabel) return;
+
+    select.innerHTML =
+      '<option value="">Selecciona para ver tu jornada</option>' +
+      `<option value="${escapeHtml(playerId)}" selected>${escapeHtml(playerLabel)} - ${escapeHtml(playerId)}</option>`;
+  }
+
+  function readSelectedPlayerLabel_(select, playerId) {
+    if (!select) return '';
+    const normalizedId = String(playerId || '').trim();
+    const option = Array.from(select.options || []).find(function (item) {
+      return String(item && item.value || '').trim() === normalizedId;
+    });
+    if (!option) return '';
+
+    const rawLabel = String(option.textContent || option.innerText || '').trim();
+    if (!rawLabel) return '';
+    const suffix = ` - ${normalizedId}`;
+    return rawLabel.endsWith(suffix)
+      ? rawLabel.slice(0, rawLabel.length - suffix.length).trim()
+      : rawLabel;
   }
 
   function saveGroupsPlayerId(playerId) {

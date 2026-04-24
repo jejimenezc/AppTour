@@ -119,10 +119,8 @@ function getMyDayViewModel(playerId) {
           isPlayerB: playerContext.isPlayerB,
           eventState: buildPublicMatchEventState_(currentMatch),
           isByeAdvance: isByeAdvanceMatch(currentMatch),
-          allowedCaptureActions: getAllowedCaptureActions(currentMatch, playerId),
         }
       : null,
-    timeState: buildPublicTimeState_(currentBlock),
     activeBlockId: String(currentBlockId || '').trim(),
     itinerary: itinerary,
     timeline: itinerary,
@@ -137,22 +135,6 @@ function getMyDayViewModelFromUi(playerId) {
   publishMyDayViewModelToFirebase(playerId);
   publishDoublesViewModelToFirebase(playerId);
   return vm;
-}
-
-function getAllowedCaptureActions(match, playerId) {
-  const playerContext = buildPlayerMatchContext(match, playerId);
-  const isReferee = playerContext.isReferee;
-  const isPlayer = playerContext.isPlayerA || playerContext.isPlayerB;
-  const eventState = buildPublicMatchEventState_(match);
-  const isClosed = !!(eventState.resultSubmitted || eventState.autoClosed);
-  const canCapture = !isClosed && (isReferee || isPlayer);
-
-  return {
-    canOpen: canCapture,
-    canSubmitFinal: canCapture,
-    canSubmitClosingState: canCapture,
-    canViewOnly: false,
-  };
 }
 
 function getCheckedInPlayersForSelector() {
