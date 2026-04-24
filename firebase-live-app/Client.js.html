@@ -3265,6 +3265,8 @@
     const nextCommitment = buildMyDayCommitmentLabel(derivedVm);
     const cta = buildMyDayCta(derivedVm);
     const matchMeta = derivedVm.currentMatch || null;
+    const shouldRenderEmptyState = shouldRenderMyDayEmptyState_(derivedVm);
+    const emptyStateMessage = getMyDayEmptyStateMessage_(derivedVm);
 
     let playerBadgeHtml = '';
     if (playerRoleUi.show) {
@@ -3279,7 +3281,7 @@
       </div>
     `;
 
-    if (matchMeta) {
+    if (!shouldRenderEmptyState && matchMeta) {
       let matchBadgeHtml = '';
       if (matchRoleUi.show) {
         matchBadgeHtml = `<span class="status-pill ${matchRoleUi.className}">${escapeHtml(matchRoleUi.label)}</span>`;
@@ -3324,6 +3326,24 @@
 
     const itineraryHtml = renderMyDayTimeline(vm.itinerary || vm.timeline || []);
 
+    const tempoCardHtml = shouldRenderEmptyState ? '' : `
+        <div class="card-soft myday-clock-card">
+          <div class="stat-label">Ritmo del bloque</div>
+          <div class="public-phase-gadget" id="myday-phase-gadget" style="margin-top: 10px;">
+            <span class="public-phase-gadget__led public-phase-gadget__led--idle"></span>
+            <div class="public-phase-gadget__copy">
+              <div class="public-phase-gadget__label">Sincronizacion</div>
+              <div class="public-phase-gadget__countdown">--:--:--</div>
+            </div>
+          </div>
+          <div class="helper myday-clock-meta" id="myday-clock-phase" style="margin-top: 10px;">Esperando sincronizacion...</div>
+        </div>
+    `;
+
+    const contentCardHtml = shouldRenderEmptyState
+      ? `<div class="card-soft"><div class="empty">${escapeHtml(emptyStateMessage)}</div></div>`
+      : matchCardHtml;
+
     root.innerHTML = `
       <div class="stack">
         <div class="card-soft">
@@ -3336,25 +3356,17 @@
           </div>
         </div>
 
-        <div class="card-soft myday-clock-card">
-          <div class="stat-label">Ritmo del bloque</div>
-          <div class="public-phase-gadget" id="myday-phase-gadget" style="margin-top: 10px;">
-            <span class="public-phase-gadget__led public-phase-gadget__led--idle"></span>
-            <div class="public-phase-gadget__copy">
-              <div class="public-phase-gadget__label">Sincronizacion</div>
-              <div class="public-phase-gadget__countdown">--:--:--</div>
-            </div>
-          </div>
-          <div class="helper myday-clock-meta" id="myday-clock-phase" style="margin-top: 10px;">Esperando sincronizacion...</div>
-        </div>
+        ${tempoCardHtml}
 
-        ${matchCardHtml}
+        ${contentCardHtml}
 
         ${itineraryHtml}
       </div>
     `;
 
-    updateMyDayClockHud(true);
+    if (!shouldRenderEmptyState) {
+      updateMyDayClockHud(true);
+    }
   }
 
   function updateMyDayClockHud(forceRefreshCheck) {
@@ -3423,6 +3435,29 @@
         <div class="public-phase-gadget__countdown">${escapeHtml(state.countdown)}</div>
       </div>
     `;
+  }
+
+  function shouldRenderMyDayEmptyState_(vm) {
+    const tournamentStatus = String(vm && vm.tournamentStatus || '').trim();
+    if (tournamentStatus === 'awaiting_singles_group_confirmation') return true;
+    if (tournamentStatus === 'awaiting_doubles_final') return true;
+    if (tournamentStatus === 'awaiting_singles_final') return true;
+    if (tournamentStatus === 'finished') return true;
+    return false;
+  }
+
+  function getMyDayEmptyStateMessage_(vm) {
+    const tournamentStatus = String(vm && vm.tournamentStatus || '').trim();
+    if (tournamentStatus === 'awaiting_singles_group_confirmation') {
+      return 'Esperando confirmacion de grupos';
+    }
+    if (tournamentStatus === 'awaiting_doubles_final' || tournamentStatus === 'awaiting_singles_final') {
+      return 'Esperando programacion de finales';
+    }
+    if (tournamentStatus === 'finished') {
+      return 'Torneo finalizado';
+    }
+    return 'Sin compromiso en este momento';
   }
 
   function handleTouchCardKeydown(event) {
