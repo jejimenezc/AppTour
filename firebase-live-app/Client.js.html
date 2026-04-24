@@ -3303,7 +3303,7 @@
       `;
 
       matchCardHtml = `
-        <div class="${matchCardClassName}"${matchCardAttrs}>
+        <div id="myday-match-card" class="${matchCardClassName}"${matchCardAttrs}>
           <div class="row-between">
             <div>
               <span class="badge">Mesa ${escapeHtml(matchMeta.tableNo)}</span>
@@ -3443,9 +3443,17 @@
 
   function updateMyDayCurrentMatchCard_(vm) {
     if (!vm) return;
+    if (currentMyDayVm) {
+      currentMyDayVm = Object.assign({}, currentMyDayVm, {
+        currentBlock: vm.currentBlock ? Object.assign({}, vm.currentBlock) : vm.currentBlock,
+        currentMatch: vm.currentMatch ? Object.assign({}, vm.currentMatch) : vm.currentMatch,
+      });
+    }
+
 
     const commitmentTitleEl = document.getElementById('myday-commitment-title');
     const commitmentDetailEl = document.getElementById('myday-commitment-detail');
+    const matchCardEl = document.getElementById('myday-match-card');
     const matchBadgeEl = document.getElementById('myday-match-badge');
     const matchCtaEl = document.getElementById('myday-match-cta');
 
@@ -3459,6 +3467,28 @@
 
     if (!vm.currentMatch) return;
 
+    const cta = buildMyDayCta(vm);
+    const isInteractiveCard = !cta.disabled;
+
+    if (matchCardEl) {
+      matchCardEl.className = isInteractiveCard
+        ? 'card-soft touch-card touch-card--interactive'
+        : 'card-soft touch-card';
+
+      if (isInteractiveCard) {
+        matchCardEl.setAttribute('role', 'button');
+        matchCardEl.setAttribute('tabindex', '0');
+        matchCardEl.setAttribute('onclick', 'openMatchCapture()');
+        matchCardEl.setAttribute('onkeydown', 'handleTouchCardKeydown(event)');
+      } else {
+        matchCardEl.removeAttribute('role');
+        matchCardEl.removeAttribute('tabindex');
+        matchCardEl.removeAttribute('onclick');
+        matchCardEl.removeAttribute('onkeydown');
+      }
+    }
+
+
     if (matchBadgeEl) {
       const matchRoleUi = getMyDayMatchRoleUi(vm);
       matchBadgeEl.innerHTML = matchRoleUi.show
@@ -3467,8 +3497,8 @@
     }
 
     if (matchCtaEl) {
-      const cta = buildMyDayCta(vm);
-      const isInteractiveCard = !cta.disabled;
+      // CTA derivado arriba para mantener la interactividad del card sincronizada por tick.
+      // isInteractiveCard derivado arriba.
       matchCtaEl.innerHTML = `
         <div class="touch-card__cta ${isInteractiveCard ? 'touch-card__cta--active' : 'touch-card__cta--disabled'}" style="margin-top: 14px;">
           <div class="touch-card__cta-label">${escapeHtml(cta.label)}</div>
