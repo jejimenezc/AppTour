@@ -3276,8 +3276,8 @@
     let matchCardHtml = `
       <div class="card-soft touch-card">
         <div class="stat-label">Compromiso del bloque</div>
-        <div class="stat-value" style="font-size: 18px; margin-top: 8px;">${escapeHtml(nextCommitment.title)}</div>
-        <div class="helper" style="margin-top: 6px;">${escapeHtml(nextCommitment.detail)}</div>
+        <div class="stat-value" id="myday-commitment-title" style="font-size: 18px; margin-top: 8px;">${escapeHtml(nextCommitment.title)}</div>
+        <div class="helper" id="myday-commitment-detail" style="margin-top: 6px;">${escapeHtml(nextCommitment.detail)}</div>
       </div>
     `;
 
@@ -3308,7 +3308,7 @@
               <span class="badge">Mesa ${escapeHtml(matchMeta.tableNo)}</span>
               <span class="helper" style="margin-left:8px;">${escapeHtml(matchMeta.phaseLabel)}</span>
             </div>
-            ${matchBadgeHtml}
+            <span id="myday-match-badge">${matchBadgeHtml}</span>
           </div>
 
           <div style="margin-top: 12px;">
@@ -3316,10 +3316,10 @@
             <div class="stat-value" style="margin-top: 8px;">
               ${renderResponsiveMatchup(matchMeta)}
             </div>
-            <div class="helper" style="margin-top: 6px;">${escapeHtml(nextCommitment.detail)}</div>
+            <div class="helper" id="myday-commitment-detail" style="margin-top: 6px;">${escapeHtml(nextCommitment.detail)}</div>
           </div>
 
-          ${actionHintHtml}
+          <div id="myday-match-cta">${actionHintHtml}</div>
         </div>
       `;
     }
@@ -3403,15 +3403,16 @@
       return;
     }
 
+    const derivedVm = buildMyDayVmForClientTime_(vm);
     const internalNowMs = snapshot.internalNowMs;
-    const currentBlock = vm.currentBlock || null;
+    const currentBlock = derivedVm.currentBlock || null;
     const expectedStatus = getExpectedBlockStatus(currentBlock, internalNowMs);
     const phase = String(snapshot.currentPhase || expectedStatus || '').trim();
     const remainingMs = Math.max(0, Number(snapshot.phaseRemainingMs || 0));
     const state = buildPublicPhaseGadgetState_(
       phase,
       remainingMs,
-      String(vm.tournamentStatus || '').trim(),
+      String(derivedVm.tournamentStatus || '').trim(),
       !!snapshot.isRunning
     );
 
@@ -3424,6 +3425,8 @@
       snapshotState.lastPhaseKey = phase;
       myDayClockSnapshot = snapshotState;
     }
+
+    updateMyDayCurrentMatchCard_(derivedVm);
   }
 
   function renderMyDayPhaseGadget_(root, state) {
@@ -3435,6 +3438,43 @@
         <div class="public-phase-gadget__countdown">${escapeHtml(state.countdown)}</div>
       </div>
     `;
+  }
+
+  function updateMyDayCurrentMatchCard_(vm) {
+    if (!vm) return;
+
+    const commitmentTitleEl = document.getElementById('myday-commitment-title');
+    const commitmentDetailEl = document.getElementById('myday-commitment-detail');
+    const matchBadgeEl = document.getElementById('myday-match-badge');
+    const matchCtaEl = document.getElementById('myday-match-cta');
+
+    const nextCommitment = buildMyDayCommitmentLabel(vm);
+    if (commitmentTitleEl) {
+      commitmentTitleEl.textContent = nextCommitment.title;
+    }
+    if (commitmentDetailEl) {
+      commitmentDetailEl.textContent = nextCommitment.detail;
+    }
+
+    if (!vm.currentMatch) return;
+
+    if (matchBadgeEl) {
+      const matchRoleUi = getMyDayMatchRoleUi(vm);
+      matchBadgeEl.innerHTML = matchRoleUi.show
+        ? `<span class="status-pill ${escapeHtml(matchRoleUi.className)}">${escapeHtml(matchRoleUi.label)}</span>`
+        : '';
+    }
+
+    if (matchCtaEl) {
+      const cta = buildMyDayCta(vm);
+      const isInteractiveCard = !cta.disabled;
+      matchCtaEl.innerHTML = `
+        <div class="touch-card__cta ${isInteractiveCard ? 'touch-card__cta--active' : 'touch-card__cta--disabled'}" style="margin-top: 14px;">
+          <div class="touch-card__cta-label">${escapeHtml(cta.label)}</div>
+          ${cta.helperText ? `<div class="helper" style="margin-top: 8px;">${escapeHtml(cta.helperText)}</div>` : ''}
+        </div>
+      `;
+    }
   }
 
   function shouldRenderMyDayEmptyState_(vm) {
