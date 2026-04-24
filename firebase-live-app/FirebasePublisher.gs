@@ -143,6 +143,25 @@ function publishPlayerRealtimeViewsToFirebase(playerIds) {
   });
 }
 
+function publishPlayerSelectorOptionsToFirebase() {
+  const options = getCheckedInPlayersForSelector();
+  const payload = {
+    options: options,
+    generatedAt: nowIso(),
+    snapshotVersion: String(Date.now()),
+    source: 'gas',
+  };
+
+  writeFirebaseNode_('players/selectorOptions', payload);
+
+  return {
+    ok: true,
+    count: options.length,
+    generatedAt: payload.generatedAt,
+    snapshotVersion: payload.snapshotVersion,
+  };
+}
+
 function publishAllMyDayViewModelsToFirebase() {
   const normalizedIds = getCheckedInPlayersForSelector()
     .map(function (player) {
@@ -159,12 +178,14 @@ function publishAllMyDayViewModelsToFirebase() {
 function publishRealtimeDebugForPlayer(playerId) {
   const normalizedPlayerId = normalizeRealtimePlayerId_(playerId);
   const snapshotResult = publishRealtimeSnapshotToFirebase();
+  const selectorResult = publishPlayerSelectorOptionsToFirebase();
   const playerResults = publishPlayerRealtimeViewsToFirebase([normalizedPlayerId]);
 
   return {
     ok: true,
     debugPlayerId: normalizedPlayerId,
     snapshot: snapshotResult,
+    selector: selectorResult,
     playerViews: playerResults,
   };
 }

@@ -45,15 +45,20 @@
   let myDayClockSnapshot = null;
   let myDayRealtimeSnapshotReceived = false;
   let myDayRealtimeBootstrapTimer = null;
+  let playerSelectorRealtimeReceived = false;
+  let playerSelectorBootstrapTimer = null;
   let doublesLoadRequestSeq = 0;
   let doublesLoadRequestActive = 0;
   let doublesIsLoading = false;
   let doublesLoadingTitle = '';
   let doublesLoadingDetail = '';
+  let doublesRealtimeSnapshotReceived = false;
+  let doublesRealtimeBootstrapTimer = null;
   let db = null;
   let realtimeMatchesRef = null;
   let realtimeMyDayRef = null;
   let realtimeDoublesRef = null;
+  let realtimeSelectorOptionsRef = null;
   let realtimeListenerAttached = false;
   let realtimeMyDayPlayerId = '';
   let realtimeDoublesPlayerId = '';
@@ -765,6 +770,8 @@
     realtimeDoublesRef.on('value', function (snapshot) {
       const vm = snapshot ? snapshot.val() : null;
       if (!vm) return;
+      doublesRealtimeSnapshotReceived = true;
+      clearDoublesRealtimeBootstrapTimer_();
       renderDoublesConfig(vm);
     }, function (error) {
       console.error('Error al escuchar dobles en Firebase.', error);
@@ -777,6 +784,31 @@
       realtimeDoublesRef = null;
     }
     realtimeDoublesPlayerId = '';
+    doublesRealtimeSnapshotReceived = false;
+    clearDoublesRealtimeBootstrapTimer_();
+  }
+
+  function clearDoublesRealtimeBootstrapTimer_() {
+    if (doublesRealtimeBootstrapTimer) {
+      window.clearTimeout(doublesRealtimeBootstrapTimer);
+      doublesRealtimeBootstrapTimer = null;
+    }
+  }
+
+  function startDoublesRealtimeBootstrap_(playerId, silent) {
+    clearDoublesRealtimeBootstrapTimer_();
+    doublesRealtimeSnapshotReceived = false;
+
+    if (!db) {
+      loadDoublesConfig({ silent: !!silent, forceServer: true, subscribeAfterLoad: true });
+      return;
+    }
+
+    doublesRealtimeBootstrapTimer = window.setTimeout(function () {
+      doublesRealtimeBootstrapTimer = null;
+      if (doublesRealtimeSnapshotReceived) return;
+      loadDoublesConfig({ silent: !!silent, forceServer: true, subscribeAfterLoad: true });
+    }, MYDAY_REALTIME_BOOT_TIMEOUT_MS);
   }
 
   function normalizeRealtimeMatchesPayload(payload) {
@@ -1642,6 +1674,12 @@
   }
 
   function loadPlayerSelector() {
+    if (db) {
+      subscribeRealtimePlayerSelectorOptions_();
+      startPlayerSelectorRealtimeBootstrap_();
+      return;
+    }
+
     google.script.run
       .withSuccessHandler(renderPlayerSelector)
       .withFailureHandler(function (err) {
@@ -1650,15 +1688,81 @@
       .getCheckedInPlayersForSelector();
   }
 
+  function subscribeRealtimePlayerSelectorOptions_() {
+    if (!db) return;
+    if (realtimeSelectorOptionsRef) return;
+
+    realtimeSelectorOptionsRef = db.ref('players/selectorOptions');
+    realtimeSelectorOptionsRef.on('value', function (snapshot) {
+      const payload = snapshot ? snapshot.val() : null;
+      const options = payload && Array.isArray(payload.options) ? payload.options : null;
+      if (!options) return;
+      playerSelectorRealtimeReceived = true;
+      clearPlayerSelectorRealtimeBootstrapTimer_();
+      renderPlayerSelector(options);
+    }, function (error) {
+      console.error('Error al escuchar selector de jugadores en Firebase.', error);
+    });
+  }
+
+  function clearPlayerSelectorRealtimeBootstrapTimer_() {
+    if (playerSelectorBootstrapTimer) {
+      window.clearTimeout(playerSelectorBootstrapTimer);
+      playerSelectorBootstrapTimer = null;
+    }
+  }
+
+  function startPlayerSelectorRealtimeBootstrap_() {
+    clearPlayerSelectorRealtimeBootstrapTimer_();
+    playerSelectorRealtimeReceived = false;
+
+    if (!db) return;
+
+    playerSelectorBootstrapTimer = window.setTimeout(function () {
+      playerSelectorBootstrapTimer = null;
+      if (playerSelectorRealtimeReceived) return;
+      google.script.run
+        .withSuccessHandler(renderPlayerSelector)
+        .withFailureHandler(function (err) {
+          console.error(err);
+        })
+        .getCheckedInPlayersForSelector();
+    }, MYDAY_REALTIME_BOOT_TIMEOUT_MS);
+  }
+
   function loadDoublesConfig(options) {
     const opts = options || {};
     const silent = !!opts.silent;
+    const forceServer = !!opts.forceServer;
+    const subscribeAfterLoad = opts.subscribeAfterLoad !== false;
     const root = document.getElementById('doubles-config-content');
     const playerId = getSavedPlayerId();
     if (!root) return;
 
-    if (db && playerId) {
+    if (!playerId) {
+      currentDoublesVm = null;
+      doublesIsLoading = false;
+      renderMyDayDoublesEntryCard();
+      root.innerHTML = '<div class="empty">Selecciona tu nombre en Mi jornada para gestionar tu estado de dobles.</div>';
+      return;
+    }
+
+    if (db && playerId && !forceServer) {
       subscribeRealtimeDoubles(playerId);
+      const preserveVisibleState = silent && !!currentDoublesVm;
+      doublesIsLoading = true;
+      renderMyDayDoublesEntryCard();
+      if (!preserveVisibleState) {
+        root.innerHTML = buildDoublesLoadingHtml({
+          silent: silent,
+          title: doublesLoadingTitle,
+          detail: doublesLoadingDetail,
+        });
+      }
+      doublesLoadingTitle = '';
+      doublesLoadingDetail = '';
+      startDoublesRealtimeBootstrap_(playerId, silent);
+      return;
     }
 
     const requestId = ++doublesLoadRequestSeq;
@@ -1685,6 +1789,9 @@
         if (requestId !== doublesLoadRequestActive) return;
         doublesIsLoading = false;
         renderDoublesConfig(vm);
+        if (db && subscribeAfterLoad) {
+          subscribeRealtimeDoubles(playerId);
+        }
       })
       .withFailureHandler(function (error) {
         if (requestId !== doublesLoadRequestActive) return;
@@ -3038,7 +3145,13 @@
       options.join('');
 
     if (savedPlayerId && players.some(p => p.id === savedPlayerId)) {
-      loadMyDayFromSelect(true);
+      select.value = savedPlayerId;
+      const currentSelectedId = String(currentMyDayVm && currentMyDayVm.player && currentMyDayVm.player.id || '').trim();
+      if (currentSelectedId !== savedPlayerId) {
+        loadMyDayFromSelect(true);
+      } else {
+        renderMyDayDoublesEntryCard();
+      }
       return;
     }
 

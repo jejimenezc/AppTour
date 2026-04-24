@@ -1075,6 +1075,7 @@ function startDemoTournamentNowFromUi() {
 
 function publishRealtimeSnapshotAfterMutation_(result, playerIds) {
   publishRealtimeSnapshotToFirebase();
+  publishPlayerSelectorOptionsToFirebase();
   if (playerIds && playerIds.length) {
     publishPlayerRealtimeViewsToFirebase(playerIds);
   }
@@ -1083,6 +1084,7 @@ function publishRealtimeSnapshotAfterMutation_(result, playerIds) {
 
 function publishStructuralRealtimeAfterMutation_(result) {
   publishRealtimeSnapshotToFirebase();
+  publishPlayerSelectorOptionsToFirebase();
   publishAllMyDayViewModelsToFirebase();
   return result;
 }
