@@ -579,7 +579,7 @@ function buildMyDayTimeline(playerId, currentBlock) {
   const blocks = getBlocksSorted();
   const upcomingBlocks = blocks.filter(block => {
     const blockId = Number(block.block_id || 0);
-    if (currentBlockId) return blockId >= currentBlockId;
+    if (currentBlockId) return blockId > currentBlockId;
     return String(block.status || '').trim() !== 'closed';
   });
 

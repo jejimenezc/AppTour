@@ -3150,7 +3150,7 @@
     currentMyDayVm = vm;
     updateAppHeaderClockSnapshot(vm && vm.timeState ? vm.timeState : null);
     myDayClockSnapshot = {
-      lastExpectedStatus: '',
+      lastPhaseKey: '',
     };
     renderMyDayDoublesEntryCard();
 
@@ -3226,38 +3226,23 @@
         <div class="card-soft">
           <div class="row-between">
             <div>
-              <div class="stat-label">Bloque actual</div>
-              <div class="stat-value" style="font-size: 20px;">
-                ${derivedVm.currentBlock ? `Bloque ${escapeHtml(derivedVm.currentBlock.id)}` : 'Sin bloque activo'}
-              </div>
-              <div class="helper" style="margin-top: 6px;">
-                ${derivedVm.currentBlock ? escapeHtml(derivedVm.currentBlock.phaseLabel || '') : 'No hay fase en curso'}
-              </div>
+              <div class="stat-label">Jugador</div>
+              <div class="stat-value">${escapeHtml(vm.player.fullName || vm.player.name)}</div>
             </div>
-            <span class="status-pill status-done" id="myday-block-status-pill">${escapeHtml(derivedVm.currentBlock && derivedVm.currentBlock.visualStatusLabel ? derivedVm.currentBlock.visualStatusLabel : formatTournamentStateLabel(derivedVm.currentBlock))}</span>
+            ${playerBadgeHtml}
           </div>
         </div>
 
         <div class="card-soft myday-clock-card">
-          <div class="row-between" style="align-items: flex-start; gap: 12px;">
-            <div>
-              <div class="stat-label">Reloj interno</div>
-              <div class="myday-clock-value" id="myday-clock-now">--:--:--</div>
-              <div class="helper myday-clock-meta" id="myday-clock-phase">Esperando sincronización...</div>
+          <div class="stat-label">Ritmo del bloque</div>
+          <div class="public-phase-gadget" id="myday-phase-gadget" style="margin-top: 10px;">
+            <span class="public-phase-gadget__led public-phase-gadget__led--idle"></span>
+            <div class="public-phase-gadget__copy">
+              <div class="public-phase-gadget__label">Sincronizacion</div>
+              <div class="public-phase-gadget__countdown">--:--:--</div>
             </div>
-            <span class="status-pill status-pending" id="myday-clock-status-pill">Sin snapshot</span>
           </div>
-        </div>
-
-        <div class="card-soft">
-          <div class="row-between">
-            <div>
-              <div class="stat-label">Jugador</div>
-              <div class="stat-value">${escapeHtml(vm.player.fullName || vm.player.name)}</div>
-              <div class="helper" style="margin-top: 6px;">${escapeHtml(vm.player.name)} · ID ${escapeHtml(vm.player.id)}</div>
-            </div>
-            ${playerBadgeHtml}
-          </div>
+          <div class="helper myday-clock-meta" id="myday-clock-phase" style="margin-top: 10px;">Esperando sincronizacion...</div>
         </div>
 
         ${matchCardHtml}
@@ -3270,12 +3255,10 @@
   }
 
   function updateMyDayClockHud(forceRefreshCheck) {
-    const clockValueEl = document.getElementById('myday-clock-now');
+    const phaseGadgetEl = document.getElementById('myday-phase-gadget');
     const phaseEl = document.getElementById('myday-clock-phase');
-    const statusPillEl = document.getElementById('myday-clock-status-pill');
-    const blockStatusPillEl = document.getElementById('myday-block-status-pill');
 
-    if (!clockValueEl || !phaseEl || !statusPillEl) {
+    if (!phaseGadgetEl || !phaseEl) {
       return;
     }
 
@@ -3286,67 +3269,57 @@
     const clockHealthMessage = String(snapshot && snapshot.healthMessage || '');
 
     if (!vm || !snapshot || (!snapshot.internalNowMs && clockHealth !== 'missing_start_ts')) {
-      clockValueEl.textContent = '--:--:--';
-      phaseEl.textContent = 'Selecciona un jugador para ver su reloj interno.';
-      statusPillEl.textContent = 'Sin snapshot';
-      statusPillEl.className = 'status-pill status-pending';
+      renderMyDayPhaseGadget_(phaseGadgetEl, {
+        ledClass: 'public-phase-gadget__led public-phase-gadget__led--idle',
+        label: 'Sincronizacion',
+        countdown: '--:--:--',
+      });
+      phaseEl.textContent = 'Selecciona un jugador para ver su jornada.';
       return;
     }
 
     if (clockHealth === 'missing_start_ts' || clockHealth === 'invalid_anchor') {
-      clockValueEl.textContent = '--:--:--';
+      renderMyDayPhaseGadget_(phaseGadgetEl, {
+        ledClass: 'public-phase-gadget__led public-phase-gadget__led--idle',
+        label: 'Config invalida',
+        countdown: '--:--:--',
+      });
       phaseEl.textContent = clockHealthMessage || 'Falta configurar tournament_start_ts.';
-      statusPillEl.textContent = 'Config invalida';
-      statusPillEl.className = 'status-pill status-closed';
       return;
     }
 
     const internalNowMs = snapshot.internalNowMs;
-    const tournamentStartMs = Number(snapshot.tournamentStartMs || 0);
     const currentBlock = vm.currentBlock || null;
-    const beforeTournamentStart = !!tournamentStartMs && internalNowMs < tournamentStartMs;
     const expectedStatus = getExpectedBlockStatus(currentBlock, internalNowMs);
-    const expectedLabel = expectedStatus ? formatTournamentStateLabel({ status: expectedStatus }) : 'Sin bloque';
+    const phase = String(snapshot.currentPhase || expectedStatus || '').trim();
+    const remainingMs = Math.max(0, Number(snapshot.phaseRemainingMs || 0));
+    const state = buildPublicPhaseGadgetState_(
+      phase,
+      remainingMs,
+      String(vm.tournamentStatus || '').trim(),
+      !!snapshot.isRunning
+    );
 
-    if (clockHealth === 'missing_start_ts') {
-      clockValueEl.textContent = '--:--:--';
-    } else {
-      clockValueEl.textContent = tournamentStartMs
-        ? beforeTournamentStart
-          ? formatCountdown(tournamentStartMs - internalNowMs)
-          : formatElapsedClock(internalNowMs - tournamentStartMs)
-        : '--:--:--';
-    }
+    renderMyDayPhaseGadget_(phaseGadgetEl, state);
     phaseEl.textContent = currentBlock
-      ? `Bloque ${currentBlock.id} · ${expectedLabel}`
+      ? `Bloque ${currentBlock.id} - ${String(currentBlock.phaseLabel || '').trim() || formatTournamentStateLabel({ status: expectedStatus || '' })}`
       : 'Sin bloque activo';
-    if (blockStatusPillEl) {
-      blockStatusPillEl.textContent = currentBlock
-        ? formatTournamentStateLabel({ status: expectedStatus || currentBlock.status || '' })
-        : 'Sin actividad';
-    }
 
-    if (clockHealth === 'missing_start_ts') {
-      statusPillEl.textContent = 'Config invalida';
-      statusPillEl.className = 'status-pill status-closed';
-    } else if (clockHealth === 'autocorrected') {
-      statusPillEl.textContent = 'Autocorregido';
-      statusPillEl.className = 'status-pill status-pending';
-    } else if (beforeTournamentStart) {
-      statusPillEl.textContent = 'Aun no inicia';
-      statusPillEl.className = 'status-pill status-pending';
-    } else if (!snapshot.isRunning) {
-      statusPillEl.textContent = 'Pausado';
-      statusPillEl.className = 'status-pill status-closed';
-    } else {
-      statusPillEl.textContent = expectedStatus ? expectedLabel : 'Sin bloque';
-      statusPillEl.className = expectedStatus ? 'status-pill status-done' : 'status-pill status-closed';
-    }
-
-    if (currentBlock && (forceRefreshCheck || expectedStatus !== snapshotState.lastExpectedStatus)) {
-      snapshotState.lastExpectedStatus = expectedStatus;
+    if (currentBlock && (forceRefreshCheck || phase !== snapshotState.lastPhaseKey)) {
+      snapshotState.lastPhaseKey = phase;
       myDayClockSnapshot = snapshotState;
     }
+  }
+
+  function renderMyDayPhaseGadget_(root, state) {
+    if (!root || !state) return;
+    root.innerHTML = `
+      <span class="${escapeHtml(state.ledClass)}"></span>
+      <div class="public-phase-gadget__copy">
+        <div class="public-phase-gadget__label">${escapeHtml(state.label)}</div>
+        <div class="public-phase-gadget__countdown">${escapeHtml(state.countdown)}</div>
+      </div>
+    `;
   }
 
   function handleTouchCardKeydown(event) {
