@@ -486,6 +486,7 @@
   function renderPublicScreenAtClientTime_() {
     const vm = buildPublicVmForClientTime_(currentPublicVm);
     renderTopStats(vm);
+    renderPublicPhaseGadget(vm);
     renderPublicDebug(vm);
     renderPublicMatches(vm);
   }
@@ -517,6 +518,105 @@
     const generatedAt = vm ? String(vm.generatedAt || '').trim() : '';
 
     root.textContent = `snapshot ${snapshotVersion} | interna ${internalNowTs || '-'} | bloque ${blockStatus || '-'} | payload ${generatedAt || '-'}`;
+  }
+
+  function renderPublicPhaseGadget(vm) {
+    const root = document.getElementById('public-phase-gadget');
+    if (!root) return;
+
+    const projectedClock = getProjectedClockSnapshot_();
+    const phase = String(
+      projectedClock && projectedClock.currentPhase ||
+      vm && vm.timeState && vm.timeState.currentPhase ||
+      ''
+    ).trim();
+    const remainingMs = Math.max(0, Number(
+      projectedClock && projectedClock.phaseRemainingMs ||
+      vm && vm.timeState && vm.timeState.phaseRemainingMs ||
+      0
+    ));
+    const tournamentStatus = String(vm && vm.tournamentStatus || '').trim();
+
+    const state = buildPublicPhaseGadgetState_(phase, remainingMs, tournamentStatus, !!(projectedClock && projectedClock.isRunning));
+    root.innerHTML = `
+      <span class="${escapeHtml(state.ledClass)}"></span>
+      <div class="public-phase-gadget__copy">
+        <div class="public-phase-gadget__label">${escapeHtml(state.label)}</div>
+        <div class="public-phase-gadget__countdown">${escapeHtml(state.countdown)}</div>
+      </div>
+    `;
+  }
+
+  function buildPublicPhaseGadgetState_(phase, remainingMs, tournamentStatus, isRunning) {
+    if (tournamentStatus === 'awaiting_singles_group_confirmation') {
+      return {
+        ledClass: 'public-phase-gadget__led public-phase-gadget__led--idle',
+        label: 'Checkpoint manual',
+        countdown: 'Esperando confirmación de grupos',
+      };
+    }
+
+    if (tournamentStatus === 'awaiting_doubles_final' || tournamentStatus === 'awaiting_singles_final') {
+      return {
+        ledClass: 'public-phase-gadget__led public-phase-gadget__led--idle',
+        label: 'Checkpoint manual',
+        countdown: 'Esperando programación de finales',
+      };
+    }
+
+    if (tournamentStatus === 'finished') {
+      return {
+        ledClass: 'public-phase-gadget__led public-phase-gadget__led--idle',
+        label: 'Estado del torneo',
+        countdown: 'Torneo finalizado',
+      };
+    }
+
+    if (phase === 'scheduled') {
+      return {
+        ledClass: `public-phase-gadget__led public-phase-gadget__led--scheduled${isRunning ? ' public-phase-gadget__led--blink' : ''}`,
+        label: 'Calentamiento previo',
+        countdown: formatCountdown(remainingMs),
+      };
+    }
+
+    if (phase === 'live') {
+      return {
+        ledClass: `public-phase-gadget__led public-phase-gadget__led--live${isRunning ? ' public-phase-gadget__led--blink' : ''}`,
+        label: 'Tiempo de juego disponible',
+        countdown: formatCountdown(remainingMs),
+      };
+    }
+
+    if (phase === 'closing') {
+      return {
+        ledClass: `public-phase-gadget__led public-phase-gadget__led--closing${isRunning ? ' public-phase-gadget__led--blink' : ''}`,
+        label: 'Cierre administrativo',
+        countdown: formatCountdown(remainingMs),
+      };
+    }
+
+    if (phase === 'transition') {
+      return {
+        ledClass: 'public-phase-gadget__led public-phase-gadget__led--idle',
+        label: 'Cambio de bloque',
+        countdown: formatCountdown(remainingMs),
+      };
+    }
+
+    if (phase === 'closed') {
+      return {
+        ledClass: 'public-phase-gadget__led public-phase-gadget__led--idle',
+        label: 'Bloque cerrado',
+        countdown: 'Esperando siguiente bloque',
+      };
+    }
+
+    return {
+      ledClass: 'public-phase-gadget__led public-phase-gadget__led--idle',
+      label: 'Sincronización',
+      countdown: '--:--:--',
+    };
   }
 
   function initializeFirebaseRealtime() {

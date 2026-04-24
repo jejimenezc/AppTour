@@ -60,7 +60,14 @@
           <h2 class="section-title" style="margin: 0;">Partidos visibles</h2>
           <div id="refresh-indicator" class="helper">Actualizacion automatica activada</div>
         </div>
-        <div id="public-debug-indicator" class="helper" style="margin-bottom: 12px;">snapshot - | interna - | bloque - | payload -</div>
+        <div id="public-phase-gadget" class="public-phase-gadget" style="margin-bottom: 12px;">
+          <span class="public-phase-gadget__led public-phase-gadget__led--idle"></span>
+          <div class="public-phase-gadget__copy">
+            <div class="public-phase-gadget__label">Esperando sincronización</div>
+            <div class="public-phase-gadget__countdown">--:--:--</div>
+          </div>
+        </div>
+        <div id="public-debug-indicator" class="helper" style="display: none; margin-bottom: 12px;">snapshot - | interna - | bloque - | payload -</div>
 
         <div id="public-screen-content">
           <div class="loading">Cargando partidos del bloque actual...</div>

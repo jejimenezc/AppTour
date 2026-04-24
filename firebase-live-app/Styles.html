@@ -324,6 +324,71 @@
     margin-top: 14px;
   }
 
+  .public-phase-gadget {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 14px 16px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(248,250,252,0.96) 100%),
+      radial-gradient(circle at top right, rgba(15, 23, 42, 0.06), transparent 40%);
+  }
+
+  .public-phase-gadget__led {
+    width: 14px;
+    height: 14px;
+    border-radius: 999px;
+    background: #94a3b8;
+    box-shadow: 0 0 0 0 rgba(148, 163, 184, 0.28);
+    flex: 0 0 auto;
+  }
+
+  .public-phase-gadget__led--blink {
+    animation: public-phase-pulse 1.2s ease-in-out infinite;
+  }
+
+  .public-phase-gadget__led--scheduled {
+    background: #eab308;
+    box-shadow: 0 0 0 0 rgba(234, 179, 8, 0.28);
+  }
+
+  .public-phase-gadget__led--live {
+    background: #16a34a;
+    box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.30);
+  }
+
+  .public-phase-gadget__led--closing {
+    background: #f97316;
+    box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.30);
+  }
+
+  .public-phase-gadget__led--idle {
+    background: #94a3b8;
+  }
+
+  .public-phase-gadget__copy {
+    min-width: 0;
+  }
+
+  .public-phase-gadget__label {
+    color: var(--muted);
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 700;
+  }
+
+  .public-phase-gadget__countdown {
+    margin-top: 4px;
+    font-size: 28px;
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: 0.04em;
+    color: var(--text);
+  }
+
   .control-heartbeat-status {
     display: flex;
     align-items: center;
@@ -357,6 +422,12 @@
     0% { opacity: 0.45; box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.45); }
     50% { opacity: 1; box-shadow: 0 0 0 8px rgba(22, 163, 74, 0.12); }
     100% { opacity: 0.45; box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.0); }
+  }
+
+  @keyframes public-phase-pulse {
+    0% { opacity: 0.45; transform: scale(0.94); }
+    50% { opacity: 1; transform: scale(1.06); }
+    100% { opacity: 0.45; transform: scale(0.94); }
   }
 
   .myday-clock-metric {
