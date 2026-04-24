@@ -14,7 +14,7 @@ function getBracketSlots() {
 }
 
 /**
- * Agrega múltiples slots a BracketSlots.
+ * Agrega multiples slots a BracketSlots.
  * @param {Object[]} slots
  */
 function replaceBracketSlots(slots) {
@@ -22,7 +22,7 @@ function replaceBracketSlots(slots) {
 }
 
 /**
- * Devuelve tamaño de cuadro potencia de 2.
+ * Devuelve tamano de cuadro potencia de 2.
  * @param {number} n
  * @returns {number}
  */
@@ -33,7 +33,7 @@ function nextPowerOfTwo(n) {
 }
 
 /**
- * Genera seed positions clásicos para bracket power-of-two.
+ * Genera seed positions clasicos para bracket power-of-two.
  * Devuelve array de seeds en orden de posiciones.
  *
  * Ejemplos:
@@ -68,7 +68,7 @@ function generateSeedPositions(size) {
  * - group_id ascendente
  * - player_id ascendente
  *
- * Más adelante esto se puede mejorar con siembra real.
+ * Mas adelante esto se puede mejorar con siembra real.
  *
  * @param {Object[]} players
  * @returns {Object[]}
@@ -130,4 +130,39 @@ function buildInitialBracketMatchups(bracketType, players) {
   }
 
   return round1;
+}
+
+/**
+ * Normaliza la etiqueta de ronda para uso visible en phase_label.
+ *
+ * @param {string} roundLabel
+ * @returns {string}
+ */
+function getVisibleRoundLabel_(roundLabel) {
+  const value = String(roundLabel || '').trim().toUpperCase();
+  if (!value) return '';
+  if (value === 'FINAL' || value === 'F') return 'Final';
+  return value;
+}
+
+/**
+ * Construye phase_label de bloque segun fase y ronda real.
+ *
+ * @param {string} phaseType
+ * @param {string} roundLabel
+ * @returns {string}
+ */
+function buildPhaseLabelFromRound_(phaseType, roundLabel) {
+  const phase = String(phaseType || '').trim().toLowerCase();
+  const visibleRoundLabel = getVisibleRoundLabel_(roundLabel);
+
+  if (phase === 'doubles') {
+    return visibleRoundLabel ? `Dobles - ${visibleRoundLabel}` : 'Dobles';
+  }
+
+  if (phase === 'singles') {
+    return visibleRoundLabel ? `Singles - ${visibleRoundLabel}` : 'Singles';
+  }
+
+  return visibleRoundLabel ? `${phaseType} - ${visibleRoundLabel}` : String(phaseType || '').trim();
 }

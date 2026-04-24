@@ -1215,18 +1215,19 @@ function buildPublicPhaseLabel(match) {
   const phaseType = String(match.phase_type || '').trim();
   const bracketType = String(match.bracket_type || '').trim();
   const roundNo = Number(match.round_no || 0);
+  const roundLabel = getVisibleRoundLabel_(String(match.round_label || '').trim());
 
   if (phaseType === 'doubles') {
-    return `Dobles · Ronda ${roundNo || '-'}`;
+    return roundLabel ? `Dobles - ${roundLabel}` : `Dobles - Ronda ${roundNo || '-'}`;
   }
 
   if (phaseType === 'groups') {
-    return `Singles · Grupos · R${roundNo || '-'}`;
+    return `Singles - Grupos - R${roundNo || '-'}`;
   }
 
   if (phaseType === 'singles') {
     const name = bracketType ? capitalize(bracketType) : 'Singles';
-    return `${name} · Ronda ${roundNo || '-'}`;
+    return roundLabel ? `${name} - ${roundLabel}` : `${name} - Ronda ${roundNo || '-'}`;
   }
 
   return 'Partido';

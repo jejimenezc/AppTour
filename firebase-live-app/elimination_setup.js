@@ -164,11 +164,12 @@ function createInitialEliminationBlocks(matchups) {
   const window = buildBlockWindowFromBase(startBase);
 
   const newBlockId = maxBlockId + 1;
+  const phaseLabel = buildPhaseLabelFromRound_('singles', matchups[0] && matchups[0].round_label);
 
   createBlock({
     block_id: newBlockId,
     phase_type: 'singles',
-    phase_label: 'Singles · Primera ronda',
+    phase_label: phaseLabel,
     start_ts: window.start,
     close_signal_ts: window.closeSignal,
     hard_close_ts: window.hardClose,

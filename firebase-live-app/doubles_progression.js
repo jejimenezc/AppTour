@@ -184,11 +184,12 @@ function createNextDoublesBlockIfNeeded() {
   const window = buildBlockWindowFromBase(startBase);
 
   const newBlockId = blocks.reduce((acc, b) => Math.max(acc, Number(b.block_id || 0)), 0) + 1;
+  const phaseLabel = buildPhaseLabelFromRound_('doubles', pending[0] && pending[0].round_label);
 
   createBlock({
     block_id: newBlockId,
     phase_type: 'doubles',
-    phase_label: 'Dobles · Siguiente ronda',
+    phase_label: phaseLabel,
     start_ts: window.start,
     close_signal_ts: window.closeSignal,
     hard_close_ts: window.hardClose,
