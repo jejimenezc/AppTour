@@ -1575,17 +1575,30 @@ function normalizeTournamentStartInput_(rawValue) {
 function seedDemoDoublesConfiguration_() {
   openDoublesConfirmationWindow();
 
-  const eligible = getBaseEligiblePlayersForDoubles().filter(player =>
-    String(player.doubles_status || '') === 'eligible'
-  );
+  const tournamentLookup = getTournamentPlayerIdLookup();
+  const players = getPlayers().slice();
+  const firebasePatch = {};
+  let eligibleCount = 0;
 
-  if (!eligible.length) {
+  players.forEach(function (player) {
+    const playerId = String(player.player_id || '').trim();
+    if (!tournamentLookup[playerId]) return;
+    if (String(player.doubles_status || '').trim() !== 'eligible') return;
+
+    player.doubles_status = 'pool';
+    player.doubles_partner_id = '';
+    player.doubles_request_to = '';
+    player.doubles_request_from = '';
+    firebasePatch[`doubles/checkin/byPlayer/${playerId}`] = 'pool';
+    eligibleCount++;
+  });
+
+  if (!eligibleCount) {
     throw new Error('No hay jugadores elegibles para armar el helper de dobles demo.');
   }
 
-  eligible.forEach(function (player) {
-    optIntoPool(player.player_id);
-  });
+  replacePlayers(players);
+  patchFirebaseNodes_(firebasePatch);
 }
 
 /**

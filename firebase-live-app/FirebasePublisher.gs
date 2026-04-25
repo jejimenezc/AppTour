@@ -516,18 +516,55 @@ function requestFirebaseNode_(method, path, payload) {
     options.payload = JSON.stringify(payload);
   }
 
-  const response = UrlFetchApp.fetch(buildFirebaseUrl_(path), options);
-  const statusCode = response.getResponseCode();
-  const body = response.getContentText();
+  const url = buildFirebaseUrl_(path);
+  const maxAttempts = 3;
+  let lastError = null;
 
-  if (statusCode < 200 || statusCode >= 300) {
-    throw new Error(`Firebase ${requestMethod.toUpperCase()} failed for ${path} (${statusCode}): ${body}`);
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const response = UrlFetchApp.fetch(url, options);
+      const statusCode = response.getResponseCode();
+      const body = response.getContentText();
+
+      if (statusCode >= 200 && statusCode < 300) {
+        return {
+          statusCode: statusCode,
+          body: body,
+        };
+      }
+
+      if (attempt < maxAttempts && shouldRetryFirebaseStatusCode_(statusCode)) {
+        Utilities.sleep(attempt * 500);
+        continue;
+      }
+
+      throw new Error(`Firebase ${requestMethod.toUpperCase()} failed for ${path} (${statusCode}): ${body}`);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= maxAttempts || !shouldRetryFirebaseRequestError_(error)) {
+        throw error;
+      }
+      Utilities.sleep(attempt * 500);
+    }
   }
 
-  return {
-    statusCode: statusCode,
-    body: body,
-  };
+  throw lastError || new Error(`Firebase ${requestMethod.toUpperCase()} failed for ${path}.`);
+}
+
+function shouldRetryFirebaseStatusCode_(statusCode) {
+  const code = Number(statusCode || 0);
+  return code === 408 || code === 429 || code === 500 || code === 502 || code === 503 || code === 504;
+}
+
+function shouldRetryFirebaseRequestError_(error) {
+  const message = String(error && error.message ? error.message : error || '').toLowerCase();
+  return message.indexOf('dirección no disponible') >= 0 ||
+    message.indexOf('address unavailable') >= 0 ||
+    message.indexOf('dns') >= 0 ||
+    message.indexOf('timed out') >= 0 ||
+    message.indexOf('timeout') >= 0 ||
+    message.indexOf('temporarily unavailable') >= 0 ||
+    message.indexOf('socket') >= 0;
 }
 
 function buildFirebaseUrl_(path) {

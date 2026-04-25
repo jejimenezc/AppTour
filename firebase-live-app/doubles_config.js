@@ -147,11 +147,10 @@ function getDoublesCheckinStateMap_() {
   const checkinMap = {};
 
   Object.keys(byPlayer).forEach(function (playerId) {
-    const value = byPlayer[playerId] && typeof byPlayer[playerId] === 'object'
-      ? byPlayer[playerId]
-      : {};
-    const normalizedPlayerId = String(value.playerId || playerId || '').trim();
-    const status = String(value.status || '').trim();
+    const rawValue = byPlayer[playerId];
+    const isObjectValue = rawValue && typeof rawValue === 'object';
+    const normalizedPlayerId = String(isObjectValue ? rawValue.playerId || playerId || '' : playerId || '').trim();
+    const status = String(isObjectValue ? rawValue.status || '' : rawValue || '').trim();
     if (!normalizedPlayerId) return;
     if (status !== 'eligible' && status !== 'pool' && status !== 'opted_out') return;
     checkinMap[normalizedPlayerId] = status;

@@ -149,12 +149,62 @@ function generateDoublesTeamsAtCut() {
   consolidateDoublesFirebaseStateAtCut_();
   clearDoublesTeams();
 
+  const diagnostics = buildDoublesCutDiagnostics_();
   const confirmedTeams = buildConfirmedDoublesTeams();
   const poolTeams = buildPoolDoublesTeams(confirmedTeams.length + 1);
   const allTeams = [...confirmedTeams, ...poolTeams];
 
+  if (allTeams.length < 2) {
+    throw new Error(
+      'Se necesitan al menos 2 equipos para generar el fixture de dobles. ' +
+      `Diagnostico: tournamentPlayers=${diagnostics.tournamentPlayers}, checkedIn=${diagnostics.checkedIn}, ` +
+      `eligible=${diagnostics.eligible}, pool=${diagnostics.pool}, partnerConfirmed=${diagnostics.partnerConfirmed}, ` +
+      `optedOut=${diagnostics.optedOut}, blocked=${diagnostics.blocked}, confirmedTeams=${confirmedTeams.length}, poolTeams=${poolTeams.length}.`
+    );
+  }
+
   replaceAllRows('DoublesTeams', allTeams);
   return allTeams;
+}
+
+function buildDoublesCutDiagnostics_() {
+  const players = getPlayers().slice();
+  const tournamentPlayers = getTournamentPlayers();
+  const tournamentLookup = {};
+
+  tournamentPlayers.forEach(function (player) {
+    tournamentLookup[String(player.player_id || '').trim()] = true;
+  });
+
+  const summary = {
+    totalPlayers: players.length,
+    checkedIn: 0,
+    tournamentPlayers: tournamentPlayers.length,
+    eligible: 0,
+    pool: 0,
+    partnerConfirmed: 0,
+    partnerPending: 0,
+    optedOut: 0,
+    blocked: 0,
+  };
+
+  players.forEach(function (player) {
+    const playerId = String(player.player_id || '').trim();
+    const status = String(player.doubles_status || '').trim();
+    if (toBoolean(player.checked_in)) {
+      summary.checkedIn++;
+    }
+    if (!tournamentLookup[playerId]) return;
+
+    if (status === 'eligible') summary.eligible++;
+    else if (status === 'pool') summary.pool++;
+    else if (status === 'partner_confirmed') summary.partnerConfirmed++;
+    else if (status === 'partner_pending') summary.partnerPending++;
+    else if (status === 'opted_out') summary.optedOut++;
+    else if (status === 'blocked') summary.blocked++;
+  });
+
+  return summary;
 }
 
 /**
@@ -166,6 +216,9 @@ function generateDoublesTeamsAtCut() {
 function buildInitialDoublesMatchups(teams) {
   const ordered = teams.slice().sort((a, b) => Number(a.seed_rank) - Number(b.seed_rank));
   const n = ordered.length;
+  if (n < 2) {
+    throw new Error('Se necesitan al menos 2 equipos para construir los cruces iniciales de dobles.');
+  }
   const size = nextPowerOfTwo(n);
   const positions = generateSeedPositions(size);
 
@@ -185,6 +238,9 @@ function buildInitialDoublesMatchups(teams) {
   for (let i = 0; i < positioned.length; i += 2) {
     const left = positioned[i];
     const right = positioned[i + 1];
+    if (!left || !right) {
+      throw new Error('No fue posible construir un par válido de seeds para la primera ronda de dobles.');
+    }
     const matchNo = i / 2 + 1;
 
     round1.push({
