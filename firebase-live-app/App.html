@@ -1,13 +1,24 @@
 <div class="page">
   <div class="stack">
     <section class="card app-shell-header">
-      <div>
-        <p class="subtitle">Torneo tenis de mesa</p>
-        <h1 class="title">AppTour</h1>
-        <p class="helper">Una sola vista operativa a la vez, pensada para usar el campeonato en la mano.</p>
-        <div class="helper" id="app-clock-header" style="margin-top: 8px;">
-          Cronometro del torneo: --:--:-- | Estado: sin snapshot | Hora interna: -
+      <div class="row-between" style="align-items: flex-start; gap: 12px; flex-wrap: wrap;">
+        <div>
+          <p class="subtitle">Torneo tenis de mesa</p>
+          <h1 class="title">AppTour</h1>
+          <p class="helper">Una sola vista operativa a la vez, pensada para usar el campeonato en la mano.</p>
+          <div class="helper" id="app-clock-header" style="margin-top: 8px;">
+            Cronometro del torneo: --:--:-- | Estado: sin snapshot | Hora interna: -
+          </div>
         </div>
+
+        <button
+          id="admin-access-link"
+          type="button"
+          onclick="requestAdminAccessAndOpen()"
+          style="border: 0; background: transparent; color: #0f766e; text-decoration: underline; font-size: 14px; padding: 0; cursor: pointer;"
+        >
+          Admin
+        </button>
       </div>
 
       <div class="app-tabbar" role="tablist" aria-label="Pantallas de AppTour">
@@ -22,9 +33,6 @@
         </button>
         <button class="app-tab" type="button" data-screen-tab="ranking" aria-selected="false" onclick="setActiveAppScreen('ranking')">
           Ranking
-        </button>
-        <button class="app-tab" type="button" data-screen-tab="admin" aria-selected="false" onclick="setActiveAppScreen('admin')">
-          Control
         </button>
       </div>
     </section>
@@ -205,9 +213,9 @@
 
         <div class="row-between" style="margin-bottom: 12px; align-items: flex-end; flex-wrap: wrap;">
           <div>
-            <p class="subtitle">Panel temporal</p>
+            <p class="subtitle">Administracion provisoria</p>
             <h2 class="section-title" style="margin: 0;">Control provisorio</h2>
-            <p class="helper" style="margin-top: 6px;">Panel temporal para reset, setup y simulacion de torneo.</p>
+            <p class="helper" style="margin-top: 6px;">Secuencia operativa y diagnostico minimo para conducir el torneo desde el dispositivo admin.</p>
           </div>
 
           <button class="admin-action-button admin-action-button-secondary" onclick="loadAdminControl()">
@@ -230,16 +238,10 @@
 
             <div class="admin-actions">
               <button class="admin-action-button" onclick="saveTournamentStartTsFromAdmin()">
-                Guardar ancla
-              </button>
-              <button class="admin-action-button admin-action-button-secondary" onclick="setTournamentStartNowFromAdmin()">
-                Usar ahora
+                Guardar ancla de fecha/hora inicial
               </button>
               <button class="admin-action-button admin-action-button-secondary" onclick="initializeTournamentFlowV2FromAdmin()">
-                Reset V2
-              </button>
-              <button class="admin-action-button admin-action-button-secondary" onclick="seedDemoDoublesFromAdmin()">
-                Helper dobles demo
+                Reset
               </button>
               <button class="admin-action-button admin-action-button-secondary" onclick="generateInitialDoublesFromAdmin()">
                 Generar dobles
@@ -252,6 +254,12 @@
               </button>
               <button class="admin-action-button admin-action-button-secondary" onclick="scheduleDoublesFinalFromAdmin()">
                 Programar finales
+              </button>
+              <button class="admin-action-button admin-action-button-secondary" onclick="setTournamentStartNowFromAdmin()">
+                Usar ahora
+              </button>
+              <button class="admin-action-button admin-action-button-secondary" onclick="seedDemoDoublesFromAdmin()">
+                Demo Dobles
               </button>
               <button class="admin-action-button admin-action-button-secondary" onclick="runTickNowFromAdmin()">
                 Tick ahora
@@ -317,6 +325,54 @@
           <div class="loading">Cargando panel de control...</div>
         </div>
       </section>
+    </div>
+  </div>
+</div>
+
+<div
+  id="admin-access-modal"
+  hidden
+  style="position: fixed; inset: 0; z-index: 4000; background: rgba(15, 23, 42, 0.52); display: flex; align-items: center; justify-content: center; padding: 20px;"
+>
+  <div class="card" style="width: min(100%, 420px); margin: 0;">
+    <div class="row-between" style="align-items: flex-start; gap: 12px;">
+      <div>
+        <p class="subtitle">Acceso restringido</p>
+        <h2 class="section-title" style="margin: 0;">Admin</h2>
+        <p class="helper" style="margin-top: 6px;">Ingresa el PIN del dispositivo administrador para abrir el panel de control.</p>
+      </div>
+
+      <button
+        type="button"
+        onclick="closeAdminAccessModal()"
+        style="border: 0; background: transparent; color: #475569; font-size: 18px; line-height: 1; cursor: pointer;"
+        aria-label="Cerrar acceso admin"
+      >
+        ×
+      </button>
+    </div>
+
+    <div style="margin-top: 14px;">
+      <div class="stat-label" style="margin-bottom: 6px;">PIN</div>
+      <input
+        id="admin-access-pin-input"
+        class="admin-text-input"
+        type="password"
+        inputmode="numeric"
+        autocomplete="off"
+        placeholder="Ingresa el PIN"
+        onkeydown="handleAdminAccessPinKeydown(event)"
+      >
+      <div id="admin-access-error" class="helper" style="margin-top: 8px; color: #991b1b;"></div>
+    </div>
+
+    <div class="row-between" style="margin-top: 16px; gap: 10px; justify-content: flex-end; flex-wrap: wrap;">
+      <button class="admin-action-button admin-action-button-secondary" type="button" onclick="closeAdminAccessModal()">
+        Cancelar
+      </button>
+      <button class="admin-action-button" type="button" onclick="submitAdminAccessPin()">
+        Entrar a Admin
+      </button>
     </div>
   </div>
 </div>

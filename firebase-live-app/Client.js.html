@@ -8,9 +8,11 @@
   const LOCAL_STORAGE_GROUPS_PLAYER_KEY = 'ttm_groups_selected_player_id';
   const LOCAL_STORAGE_SCREEN_KEY = 'ttm_active_screen';
   const LOCAL_STORAGE_TIME_FAST_PATH_KEY = 'ttm_time_fast_path_v1';
+  const LOCAL_STORAGE_ADMIN_ACCESS_KEY = 'ttm_admin_access_granted_v1';
   const LOCAL_STORAGE_CONTROL_HEARTBEAT_ENABLED_KEY = 'ttm_control_heartbeat_enabled';
   const LOCAL_STORAGE_CONTROL_HEARTBEAT_INTERVAL_KEY = 'ttm_control_heartbeat_interval_seconds';
   const LOCAL_STORAGE_CONTROL_HEARTBEAT_CLIENT_ID_KEY = 'ttm_control_heartbeat_client_id';
+  const ADMIN_ACCESS_PIN = '3590';
   const CONTROL_HEARTBEAT_DEFAULT_SECONDS = 5;
   const CONTROL_HEARTBEAT_MIN_SECONDS = 3;
   const CONTROL_HEARTBEAT_MAX_SECONDS = 30;
@@ -92,8 +94,11 @@
   let controlHeartbeatLeaseRef = null;
   let controlHeartbeatLeaseInfo = null;
   let controlHeartbeatWakeLock = null;
+  let adminAccessGranted = false;
+  let pendingAdminTargetScreen = '';
 
   document.addEventListener('DOMContentLoaded', function () {
+    adminAccessGranted = getStoredAdminAccessGranted_();
     initializeControlHeartbeatState();
     initializeAppScreens();
     restoreHeaderTimeFastPath_();
@@ -103,13 +108,16 @@
     loadPlayerSelector();
     loadSinglesGroupsConfig();
     loadDoublesConfig();
-    loadAdminControl();
     bindControlHeartbeatLifecycle();
+    updateAdminAccessUi_();
   });
 
   function initializeAppScreens() {
     const savedScreen = getSavedAppScreen();
-    setActiveAppScreen(savedScreen || 'public');
+    const initialScreen = !adminAccessGranted && (savedScreen === 'admin' || savedScreen === 'groups')
+      ? 'public'
+      : savedScreen;
+    setActiveAppScreen(initialScreen || 'public');
   }
 
   function initializeControlHeartbeatState() {
@@ -174,6 +182,11 @@
 
   function setActiveAppScreen(screen) {
     const nextScreen = String(screen || 'public').trim() || 'public';
+    if ((nextScreen === 'admin' || nextScreen === 'groups') && !adminAccessGranted) {
+      openAdminAccessModal(nextScreen);
+      return;
+    }
+
     const tabs = document.querySelectorAll('[data-screen-tab]');
     const panels = document.querySelectorAll('[data-screen-panel]');
     const activeTabScreen = resolveParentScreenForTabs(nextScreen);
@@ -183,6 +196,7 @@
       tab.classList.toggle('is-active', isActive);
       tab.setAttribute('aria-selected', isActive ? 'true' : 'false');
     });
+    updateAdminAccessUi_(nextScreen);
 
     panels.forEach(function (panel) {
       const isActive = panel.getAttribute('data-screen-panel') === nextScreen;
@@ -225,6 +239,13 @@
         loadRankingLeaderboard();
       }
     }
+    if (nextScreen === 'admin') {
+      if (currentAdminVm) {
+        renderAdminControl(currentAdminVm);
+      } else {
+        loadAdminControl();
+      }
+    }
     handleControlHeartbeatScreenChange_();
     window.scrollTo({ top: 0, behavior: 'auto' });
   }
@@ -232,8 +253,101 @@
   function resolveParentScreenForTabs(screen) {
     const value = String(screen || '').trim();
     if (value === 'doubles') return 'myday';
-    if (value === 'groups') return 'admin';
+    if (value === 'groups') return '';
     return value || 'public';
+  }
+
+  function requestAdminAccessAndOpen() {
+    if (adminAccessGranted) {
+      setActiveAppScreen('admin');
+      return;
+    }
+    openAdminAccessModal('admin');
+  }
+
+  function openAdminAccessModal(targetScreen) {
+    pendingAdminTargetScreen = String(targetScreen || 'admin').trim() || 'admin';
+    const modal = document.getElementById('admin-access-modal');
+    const input = document.getElementById('admin-access-pin-input');
+    const error = document.getElementById('admin-access-error');
+    if (!modal) return;
+
+    if (error) error.textContent = '';
+    if (input) input.value = '';
+    modal.hidden = false;
+
+    window.setTimeout(function () {
+      if (input && typeof input.focus === 'function') input.focus();
+    }, 0);
+  }
+
+  function closeAdminAccessModal() {
+    const modal = document.getElementById('admin-access-modal');
+    const error = document.getElementById('admin-access-error');
+    const input = document.getElementById('admin-access-pin-input');
+    if (error) error.textContent = '';
+    if (input) input.value = '';
+    pendingAdminTargetScreen = '';
+    if (modal) modal.hidden = true;
+  }
+
+  function handleAdminAccessPinKeydown(event) {
+    if (!event) return;
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      submitAdminAccessPin();
+      return;
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeAdminAccessModal();
+    }
+  }
+
+  function submitAdminAccessPin() {
+    const input = document.getElementById('admin-access-pin-input');
+    const error = document.getElementById('admin-access-error');
+    const value = String(input && input.value || '').trim();
+    if (value !== ADMIN_ACCESS_PIN) {
+      if (error) error.textContent = 'PIN incorrecto.';
+      if (input && typeof input.focus === 'function') input.focus();
+      if (input && typeof input.select === 'function') input.select();
+      return;
+    }
+
+    adminAccessGranted = true;
+    saveAdminAccessGranted_(true);
+    const nextScreen = pendingAdminTargetScreen || 'admin';
+    closeAdminAccessModal();
+    updateAdminAccessUi_(nextScreen);
+    setActiveAppScreen(nextScreen);
+  }
+
+  function updateAdminAccessUi_(activeScreen) {
+    const link = document.getElementById('admin-access-link');
+    if (!link) return;
+
+    const currentScreen = String(activeScreen || getSavedAppScreen() || 'public').trim() || 'public';
+    const isActive = currentScreen === 'admin' || currentScreen === 'groups';
+    link.textContent = adminAccessGranted ? 'Admin abierto' : 'Admin';
+    link.style.fontWeight = isActive ? '700' : '500';
+    link.style.opacity = isActive ? '1' : '0.82';
+  }
+
+  function getStoredAdminAccessGranted_() {
+    try {
+      return window.localStorage.getItem(LOCAL_STORAGE_ADMIN_ACCESS_KEY) === 'true';
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function saveAdminAccessGranted_(value) {
+    try {
+      window.localStorage.setItem(LOCAL_STORAGE_ADMIN_ACCESS_KEY, value ? 'true' : 'false');
+    } catch (error) {
+      // ignore storage failures
+    }
   }
 
   function handleControlHeartbeatScreenChange_() {
@@ -3778,7 +3892,7 @@
   }
 
   function setAdminButtonsDisabled(disabled) {
-    const buttons = document.querySelectorAll('.admin-action-button');
+    const buttons = document.querySelectorAll('[data-screen-panel="admin"] .admin-action-button, #admin-access-modal .admin-action-button');
     buttons.forEach(function (button) {
       button.disabled = disabled;
     });
