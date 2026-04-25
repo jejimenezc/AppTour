@@ -1083,6 +1083,29 @@ function initializeTournamentFlowV2FromUi() {
   return publishStructuralRealtimeAfterMutation_(vm);
 }
 
+function resetTournamentSheetsPhaseFromUi() {
+  prepareTournamentFlowV2ResetClockState_();
+  resetTournamentFlowV2();
+  const vm = getAdminControlViewModel();
+  vm.lastActionMessage = 'Fase 1/3 completada. Sheets quedó limpia y el cronometro pausado en 00:00:00.';
+  return vm;
+}
+
+function resetTournamentFirebasePhaseFromUi() {
+  clearTournamentRealtimeStateForReset_();
+  const vm = getAdminControlViewModel();
+  vm.lastActionMessage = 'Fase 2/3 completada. Firebase quedó limpio para reiniciar la ventana operativa.';
+  return vm;
+}
+
+function bootstrapTournamentResetPhaseFromUi() {
+  openDoublesConfirmationWindow();
+  const vm = getAdminControlViewModel();
+  vm.lastActionMessage = 'Fase 3/3 completada. La ventana de dobles quedó reabierta y operativa.';
+  publishTournamentResetBootstrapRealtime_();
+  return vm;
+}
+
 function seedDemoDoublesConfigFromUi() {
   seedDemoDoublesConfiguration_();
   const vm = getAdminControlViewModel();
@@ -1341,6 +1364,24 @@ function publishRealtimeAfterDoublesMutation_(result) {
   return result;
 }
 
+function clearTournamentRealtimeStateForReset_() {
+  return patchFirebaseNodes_({
+    partidos: null,
+    system: null,
+    players: null,
+    doubles: null,
+    views: null,
+    submissions: null,
+    'control/heartbeatLease': null,
+  });
+}
+
+function publishTournamentResetBootstrapRealtime_() {
+  publishRealtimeSnapshotToFirebase();
+  publishPlayerSelectorOptionsToFirebase();
+  publishInformationalViewsToFirebase();
+}
+
 function processPendingDoublesConfigIntents_() {
   const cleanupResult = cleanupExpiredDoublesProposalIntents_();
   return {
@@ -1538,19 +1579,13 @@ function seedDemoDoublesConfiguration_() {
     String(player.doubles_status || '') === 'eligible'
   );
 
-  if (eligible.length < 6) {
-    throw new Error('No hay suficientes jugadores elegibles para armar el helper de dobles demo.');
+  if (!eligible.length) {
+    throw new Error('No hay jugadores elegibles para armar el helper de dobles demo.');
   }
 
-  proposePartner(eligible[0].player_id, eligible[1].player_id);
-  confirmPartner(eligible[1].player_id);
-
-  proposePartner(eligible[2].player_id, eligible[3].player_id);
-  confirmPartner(eligible[3].player_id);
-
-  for (let i = 4; i < eligible.length; i++) {
-    optIntoPool(eligible[i].player_id);
-  }
+  eligible.forEach(function (player) {
+    optIntoPool(player.player_id);
+  });
 }
 
 /**

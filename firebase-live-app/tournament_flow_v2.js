@@ -4,6 +4,13 @@
  * - grupos después
  */
 function initializeTournamentFlowV2() {
+  prepareTournamentFlowV2ResetClockState_();
+  resetTournamentFlowV2();
+  openDoublesConfirmationWindow();
+  setConfigValue('tournament_status', 'awaiting_doubles_confirmation', 'Ventana de dobles abierta');
+}
+
+function prepareTournamentFlowV2ResetClockState_() {
   removeTournamentClockTriggers();
   resetTournamentInternalClock();
   pauseTournamentInternalClock();
@@ -14,9 +21,6 @@ function initializeTournamentFlowV2() {
   setConfigValue('clock_publish_last_status', '', 'Estado del ultimo publish realtime');
   setConfigValue('clock_publish_last_error', '', 'Ultimo error del publish realtime');
   setConfigValue('clock_publish_last_snapshot_version', '', 'Ultima version publicada en realtime');
-  resetTournamentFlowV2();
-  openDoublesConfirmationWindow();
-  setConfigValue('tournament_status', 'awaiting_doubles_confirmation', 'Ventana de dobles abierta');
 }
 
 /**
@@ -30,10 +34,8 @@ function resetTournamentFlowV2() {
   replaceAllRows('BracketSlots', []);
   replaceAllRows('DoublesTeams', []);
 
-  const players = getPlayers();
-
-  players.forEach(player => {
-    updatePlayer(player.player_id, {
+  const players = getPlayers().map(function (player) {
+    return Object.assign({}, player, {
       group_id: '',
       group_slot: '',
       group_rank: '',
@@ -52,6 +54,7 @@ function resetTournamentFlowV2() {
       notes: '',
     });
   });
+  replacePlayers(players);
 
   setConfigValue('current_block_id', '', 'Bloque actual');
   setConfigValue('tournament_status', 'setup', 'Estado inicial');

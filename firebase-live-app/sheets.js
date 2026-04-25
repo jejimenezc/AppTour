@@ -216,10 +216,7 @@ function replaceAllRows(sheetName, objects) {
       Object.prototype.hasOwnProperty.call(obj, header) ? obj[header] : ''
     )
   );
-
-  values.forEach((row, index) => {
-    writeSheetRow_(sheet, index + 2, row);
-  });
+  writeSheetBlock_(sheet, 2, 1, values);
 }
 
 /**
@@ -237,6 +234,33 @@ function writeSheetRow_(sheet, rowNumber, row) {
 
   range.setNumberFormats(numberFormats);
   range.setValues(normalizedRow);
+}
+
+/**
+ * Escribe un bloque completo en Sheets usando una sola operacion de rango.
+ *
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
+ * @param {number} rowNumber
+ * @param {number} columnNumber
+ * @param {any[][]} rows
+ */
+function writeSheetBlock_(sheet, rowNumber, columnNumber, rows) {
+  const safeRows = Array.isArray(rows) ? rows : [];
+  if (!safeRows.length) return;
+
+  const width = safeRows[0].length;
+  const range = sheet.getRange(rowNumber, columnNumber, safeRows.length, width);
+  const numberFormats = safeRows.map(function (row) {
+    return row.map(function (value) {
+      return shouldForceTextCell_(value) ? '@' : 'General';
+    });
+  });
+  const normalizedRows = safeRows.map(function (row) {
+    return row.map(normalizeCellValueForWrite_);
+  });
+
+  range.setNumberFormats(numberFormats);
+  range.setValues(normalizedRows);
 }
 
 /**

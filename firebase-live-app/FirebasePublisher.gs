@@ -160,16 +160,33 @@ function publishPlayerRealtimeViewsToFirebase(playerIds) {
     .map(normalizeRealtimePlayerIdSafe_)
     .filter(Boolean)
     .filter(onlyUnique_);
+  if (!normalizedIds.length) return [];
 
-  return normalizedIds.map(function (playerId) {
-    const myDayResult = publishMyDayViewModelToFirebase(playerId);
-    const doublesResult = publishDoublesViewModelToFirebase(playerId);
-    return {
+  const myDayPayload = {};
+  const doublesPayload = {};
+  const results = [];
+  const updatedAt = nowIso();
+
+  normalizedIds.forEach(function (playerId) {
+    const myDayVm = getMyDayViewModel(playerId);
+    const doublesVm = getDoublesConfigViewModel(playerId);
+    myDayPayload[`players/${playerId}/myDay`] = myDayVm;
+    myDayPayload[`players/${playerId}/meta`] = {
       playerId: playerId,
-      myDayGeneratedAt: myDayResult.generatedAt,
-      doublesGeneratedAt: doublesResult.generatedAt,
+      updatedAt: updatedAt,
+      source: 'gas',
     };
+    doublesPayload[`doubles/viewModels/${playerId}`] = doublesVm;
+    results.push({
+      playerId: playerId,
+      myDayGeneratedAt: String(myDayVm.generatedAt || '').trim(),
+      doublesGeneratedAt: String(doublesVm.generatedAt || '').trim(),
+    });
   });
+
+  patchFirebaseNodes_(myDayPayload);
+  patchFirebaseNodes_(doublesPayload);
+  return results;
 }
 
 function publishPlayerSelectorOptionsToFirebase() {
@@ -198,9 +215,28 @@ function publishAllMyDayViewModelsToFirebase() {
     })
     .filter(Boolean)
     .filter(onlyUnique_);
+  if (!normalizedIds.length) return [];
+
+  const payload = {};
+  const updatedAt = nowIso();
+
+  normalizedIds.forEach(function (playerId) {
+    payload[`players/${playerId}/myDay`] = getMyDayViewModel(playerId);
+    payload[`players/${playerId}/meta`] = {
+      playerId: playerId,
+      updatedAt: updatedAt,
+      source: 'gas',
+    };
+  });
+
+  patchFirebaseNodes_(payload);
 
   return normalizedIds.map(function (playerId) {
-    return publishMyDayViewModelToFirebase(playerId);
+    return {
+      ok: true,
+      playerId: playerId,
+      generatedAt: String(payload[`players/${playerId}/myDay`] && payload[`players/${playerId}/myDay`].generatedAt || '').trim(),
+    };
   });
 }
 
@@ -211,9 +247,21 @@ function publishAllDoublesViewModelsToFirebase() {
     })
     .filter(Boolean)
     .filter(onlyUnique_);
+  if (!normalizedIds.length) return [];
+
+  const payload = {};
+  normalizedIds.forEach(function (playerId) {
+    payload[`doubles/viewModels/${playerId}`] = getDoublesConfigViewModel(playerId);
+  });
+
+  patchFirebaseNodes_(payload);
 
   return normalizedIds.map(function (playerId) {
-    return publishDoublesViewModelToFirebase(playerId);
+    return {
+      ok: true,
+      playerId: playerId,
+      generatedAt: String(payload[`doubles/viewModels/${playerId}`] && payload[`doubles/viewModels/${playerId}`].generatedAt || '').trim(),
+    };
   });
 }
 
@@ -443,6 +491,19 @@ function deleteFirebaseNode_(path) {
   return requestFirebaseNode_('delete', path);
 }
 
+function patchFirebaseNodes_(patchMap) {
+  return requestFirebaseNode_('patch', '', patchMap || {});
+}
+
+function clearDoublesRealtimeNodes_() {
+  return patchFirebaseNodes_({
+    'doubles/intents/proposals': null,
+    'doubles/intents/confirmedByPlayer': null,
+    'doubles/intents/confirmedPairs': null,
+    'doubles/checkin/byPlayer': null,
+  });
+}
+
 function requestFirebaseNode_(method, path, payload) {
   const requestMethod = String(method || 'get').toLowerCase();
   const options = {
@@ -471,8 +532,10 @@ function requestFirebaseNode_(method, path, payload) {
 
 function buildFirebaseUrl_(path) {
   const normalizedPath = String(path || '').trim().replace(/^\/+/, '');
-  const suffix = normalizedPath ? `/${normalizedPath}` : '';
-  return `${FIREBASE_RTDB_BASE_URL}${suffix}.json?auth=${encodeURIComponent(FIREBASE_RTDB_AUTH_TOKEN)}`;
+  if (!normalizedPath) {
+    return `${FIREBASE_RTDB_BASE_URL}/.json?auth=${encodeURIComponent(FIREBASE_RTDB_AUTH_TOKEN)}`;
+  }
+  return `${FIREBASE_RTDB_BASE_URL}/${normalizedPath}.json?auth=${encodeURIComponent(FIREBASE_RTDB_AUTH_TOKEN)}`;
 }
 
 function normalizeRealtimePlayerId_(playerId) {
