@@ -1313,10 +1313,14 @@
   function syncRealtimeMatchIntoMyDay(matches, publicVm) {
     if (!currentMyDayVm) return;
     const playerId = String(currentMyDayVm.player && currentMyDayVm.player.id || getSavedPlayerId() || '').trim();
+    const currentTournamentStatus = String(currentMyDayVm.tournamentStatus || '').trim();
+    const nextTournamentStatus = String(publicVm && publicVm.tournamentStatus || '').trim();
 
     const nextVm = Object.assign({}, currentMyDayVm, {
       currentBlock: publicVm && publicVm.currentBlock ? publicVm.currentBlock : currentMyDayVm.currentBlock,
-      tournamentStatus: publicVm && publicVm.tournamentStatus ? publicVm.tournamentStatus : currentMyDayVm.tournamentStatus,
+      tournamentStatus: shouldPreserveMyDayTournamentStatus_(currentTournamentStatus, nextTournamentStatus)
+        ? currentMyDayVm.tournamentStatus
+        : (publicVm && publicVm.tournamentStatus ? publicVm.tournamentStatus : currentMyDayVm.tournamentStatus),
       generatedAt: publicVm && publicVm.generatedAt ? publicVm.generatedAt : currentMyDayVm.generatedAt,
       snapshotVersion: publicVm && publicVm.snapshotVersion ? publicVm.snapshotVersion : currentMyDayVm.snapshotVersion,
     });
@@ -1348,6 +1352,21 @@
     currentMyDayVm = nextVm;
 
     renderMyDay(currentMyDayVm);
+  }
+
+  function shouldPreserveMyDayTournamentStatus_(currentStatus, incomingStatus) {
+    const currentValue = String(currentStatus || '').trim();
+    const incomingValue = String(incomingStatus || '').trim();
+    const stickyStatuses = {
+      awaiting_singles_group_confirmation: true,
+      awaiting_doubles_final: true,
+      awaiting_singles_final: true,
+      finished: true,
+    };
+
+    if (!stickyStatuses[currentValue]) return false;
+    if (!incomingValue) return true;
+    return !stickyStatuses[incomingValue];
   }
 
   function buildMyDayCurrentMatchFromPublicMatches_(playerId, matches) {
@@ -3433,6 +3452,9 @@
     }
 
     const derivedVm = buildMyDayVmForClientTime_(vm);
+    if (shouldRenderMyDayEmptyState_(derivedVm)) {
+      return;
+    }
     const internalNowMs = snapshot.internalNowMs;
     const currentBlock = derivedVm.currentBlock || null;
     const expectedStatus = getExpectedBlockStatus(currentBlock, internalNowMs);
