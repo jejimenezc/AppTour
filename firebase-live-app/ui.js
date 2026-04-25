@@ -74,6 +74,7 @@ function getMyDayViewModel(playerId) {
     throw new Error(`No existe player_id=${playerId}`);
   }
 
+  const tournamentStatus = String(getConfigValue('tournament_status') || '').trim();
   const currentBlock = getCurrentBlock();
   const currentBlockId = currentBlock ? currentBlock.block_id : '';
 
@@ -89,6 +90,7 @@ function getMyDayViewModel(playerId) {
   const itinerary = buildMyDayItinerary(playerId, currentBlock);
 
   return {
+    tournamentStatus: tournamentStatus,
     player: {
       id: player.player_id,
       name: String(player.display_name || player.player_id),

@@ -4478,7 +4478,12 @@
     const myDayPlayer = currentMyDayVm && currentMyDayVm.player && String(currentMyDayVm.player.id || '') === playerId
       ? currentMyDayVm.player
       : null;
-    const status = String(vm.tournamentStatus || '').trim();
+    const status = String(
+      currentMyDayVm && currentMyDayVm.tournamentStatus ||
+      vm.tournamentStatus ||
+      currentPublicVm && currentPublicVm.tournamentStatus ||
+      ''
+    ).trim();
 
     let badgeLabel = 'Listo';
     let badgeClass = 'status-done';
@@ -4510,14 +4515,16 @@
       return {
         disabled: true,
         isInteractive: false,
-        showCta: true,
-        eyebrowLabel: 'Subpantalla',
-        title: 'Check-in en dobles',
-        badgeLabel: 'Cargando',
-        badgeClass: 'status-pending',
+        showCta: status === 'awaiting_doubles_confirmation',
+        eyebrowLabel: status === 'awaiting_doubles_confirmation' ? 'Subpantalla' : '',
+        title: status === 'awaiting_doubles_confirmation' ? 'Check-in en dobles' : 'Equipo de dobles',
+        badgeLabel: status === 'awaiting_doubles_confirmation' ? 'Cargando' : '',
+        badgeClass: status === 'awaiting_doubles_confirmation' ? 'status-pending' : '',
         detail: `${myDayPlayer && (myDayPlayer.fullName || myDayPlayer.name) || 'Jugador seleccionado'} · Sincronizando estado de dobles...`,
-        ctaLabel: 'Actualizando check-in',
-        helperText: 'Espera un momento antes de entrar para evitar ver informacion anterior.',
+        ctaLabel: status === 'awaiting_doubles_confirmation' ? 'Actualizando check-in' : '',
+        helperText: status === 'awaiting_doubles_confirmation'
+          ? 'Espera un momento antes de entrar para evitar ver informacion anterior.'
+          : 'Estamos actualizando el resumen del equipo de dobles.',
       };
     }
 
@@ -4537,7 +4544,7 @@
         ? `${actor.name} · ${isCheckinOpen ? buildDoublesActorDetail(actor) : buildMyDayDoublesSummaryDetail_(actor)}`
         : `${myDayPlayer && (myDayPlayer.fullName || myDayPlayer.name) || 'Jugador seleccionado'} · Cargando estado de dobles...`,
       ctaLabel: 'Abrir check-in de dobles',
-      helperText: status === 'awaiting_doubles_confirmation'
+      helperText: isCheckinOpen
         ? 'La ventana esta activa para confirmar partner, entrar al pool o declinar.'
         : 'Las parejas ya quedaron fijadas y esta tarjeta ahora opera en modo resumen.',
     };
