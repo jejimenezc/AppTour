@@ -1453,6 +1453,64 @@
     };
   }
 
+  function mergeTransientMyDaySubmissionState_(nextVm, previousVm) {
+    const incomingVm = nextVm && typeof nextVm === 'object' ? nextVm : {};
+    const priorVm = previousVm && typeof previousVm === 'object' ? previousVm : {};
+    const incomingMatch = incomingVm.currentMatch && typeof incomingVm.currentMatch === 'object'
+      ? incomingVm.currentMatch
+      : null;
+    const previousMatch = priorVm.currentMatch && typeof priorVm.currentMatch === 'object'
+      ? priorVm.currentMatch
+      : null;
+
+    if (!incomingMatch || !previousMatch) return incomingVm;
+
+    const incomingMatchId = String(incomingMatch.matchId || incomingMatch.id || '').trim();
+    const previousMatchId = String(previousMatch.matchId || previousMatch.id || '').trim();
+    if (!incomingMatchId || incomingMatchId !== previousMatchId) return incomingVm;
+
+    const incomingEventState = normalizeMyDayEventState_(incomingMatch.eventState);
+    const previousEventState = normalizeMyDayEventState_(previousMatch.eventState);
+    const shouldPreservePendingSubmission = !!previousEventState.pendingSubmission &&
+      !incomingEventState.pendingSubmission &&
+      !incomingEventState.resultSubmitted &&
+      !incomingEventState.autoClosed &&
+      !incomingEventState.tableBlocked;
+    const shouldPreserveSubmissionLock = (
+      previousEventState.submissionStatus === 'queued' ||
+      previousEventState.submissionStatus === 'processing'
+    ) && !incomingEventState.submissionStatus &&
+      !incomingEventState.resultSubmitted &&
+      !incomingEventState.autoClosed &&
+      !incomingEventState.tableBlocked;
+
+    if (!shouldPreservePendingSubmission && !shouldPreserveSubmissionLock) {
+      return incomingVm;
+    }
+
+    const mergedEventState = Object.assign({}, incomingEventState);
+
+    if (shouldPreservePendingSubmission) {
+      mergedEventState.pendingSubmission = true;
+      mergedEventState.pendingSubmissionMode = previousEventState.pendingSubmissionMode;
+      mergedEventState.pendingSubmissionAt = previousEventState.pendingSubmissionAt;
+    }
+
+    if (shouldPreserveSubmissionLock) {
+      mergedEventState.submissionStatus = previousEventState.submissionStatus;
+      mergedEventState.submissionMode = previousEventState.submissionMode;
+      mergedEventState.submissionSubmissionId = previousEventState.submissionSubmissionId;
+      mergedEventState.submissionActorRole = previousEventState.submissionActorRole;
+      mergedEventState.submissionAt = previousEventState.submissionAt;
+    }
+
+    return Object.assign({}, incomingVm, {
+      currentMatch: Object.assign({}, incomingMatch, {
+        eventState: mergedEventState,
+      }),
+    });
+  }
+
   function normalizeMyDayEventState_(eventState) {
     const source = eventState && typeof eventState === 'object' ? eventState : {};
 
@@ -3292,10 +3350,12 @@
   }
 
   function renderMyDay(vm) {
-    const safeVm = vm && typeof vm === 'object' ? Object.assign({}, vm) : vm;
+    const previousVm = currentMyDayVm;
+    let safeVm = vm && typeof vm === 'object' ? Object.assign({}, vm) : vm;
     if (safeVm && Object.prototype.hasOwnProperty.call(safeVm, 'timeState')) {
       delete safeVm.timeState;
     }
+    safeVm = mergeTransientMyDaySubmissionState_(safeVm, previousVm);
     currentMyDayVm = safeVm;
     ensureCurrentMatchSubmissionStateSubscription_();
     myDayClockSnapshot = {
