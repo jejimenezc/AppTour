@@ -2546,7 +2546,9 @@
 
   function shouldRenderDoublesPendingUiActionCard_(pendingAction) {
     const actionName = String(pendingAction && pendingAction.actionName || '').trim();
-    return actionName !== 'opt_into_pool' && actionName !== 'decline_doubles';
+    return actionName !== 'opt_into_pool' &&
+      actionName !== 'decline_doubles' &&
+      actionName !== 'back_to_eligible';
   }
 
   function renderDoublesConfig(vm) {
@@ -4432,30 +4434,40 @@
     if (!root) return;
 
     const state = buildMyDayDoublesEntryState();
-    const attrs = state.disabled
-      ? ''
-      : ' role="button" tabindex="0" onclick="openDoublesCheckInScreen()" onkeydown="handleScreenEntryCardKeydown(event, \'doubles\')"';
+    const attrs = state.isInteractive
+      ? ' role="button" tabindex="0" onclick="openDoublesCheckInScreen()" onkeydown="handleScreenEntryCardKeydown(event, \'doubles\')"'
+      : '';
     const className = state.disabled
       ? 'card-soft touch-card touch-card--disabled'
-      : 'card-soft touch-card touch-card--interactive';
+      : state.isInteractive
+        ? 'card-soft touch-card touch-card--interactive'
+        : 'card-soft touch-card';
 
     root.innerHTML = `
       <div class="${className}"${attrs}>
         <div class="row-between" style="align-items: flex-start;">
           <div>
-            <div class="stat-label">Subpantalla</div>
-            <div class="stat-value" style="font-size: 20px; margin-top: 8px;">Check-in en dobles</div>
+            ${state.eyebrowLabel ? `<div class="stat-label">${escapeHtml(state.eyebrowLabel)}</div>` : ''}
+            <div class="stat-value" style="font-size: 20px; margin-top: 8px;">${escapeHtml(state.title)}</div>
             <div class="helper" style="margin-top: 6px;">${escapeHtml(state.detail)}</div>
           </div>
-          <span class="status-pill ${state.badgeClass}">${escapeHtml(state.badgeLabel)}</span>
+          ${state.badgeLabel ? `<span class="status-pill ${state.badgeClass}">${escapeHtml(state.badgeLabel)}</span>` : ''}
         </div>
 
-        <div class="touch-card__cta ${state.disabled ? 'touch-card__cta--disabled' : 'touch-card__cta--active'}" style="margin-top: 14px;">
-          <div class="touch-card__cta-label">${escapeHtml(state.ctaLabel)}</div>
-          ${state.helperText ? `<div class="helper" style="margin-top: 8px;">${escapeHtml(state.helperText)}</div>` : ''}
-        </div>
+        ${state.showCta ? `
+          <div class="touch-card__cta ${state.disabled ? 'touch-card__cta--disabled' : 'touch-card__cta--active'}" style="margin-top: 14px;">
+            <div class="touch-card__cta-label">${escapeHtml(state.ctaLabel)}</div>
+            ${state.helperText ? `<div class="helper" style="margin-top: 8px;">${escapeHtml(state.helperText)}</div>` : ''}
+          </div>
+        ` : ''}
       </div>
     `;
+  }
+
+  function buildMyDayDoublesSummaryDetail_(actor) {
+    if (!actor) return 'Cargando estado de dobles...';
+    if (actor.partnerLabel) return `Partner confirmado: ${actor.partnerLabel}`;
+    return buildDoublesActorDetail(actor);
   }
 
   function buildMyDayDoublesEntryState() {
@@ -4482,6 +4494,10 @@
     if (!hasPlayer) {
       return {
         disabled: true,
+        isInteractive: false,
+        showCta: true,
+        eyebrowLabel: 'Subpantalla',
+        title: 'Check-in en dobles',
         badgeLabel: badgeLabel,
         badgeClass: badgeClass,
         detail: 'Usa el selector de Mi jornada para cargar tu estado personal antes de entrar.',
@@ -4493,6 +4509,10 @@
     if (doublesIsLoading) {
       return {
         disabled: true,
+        isInteractive: false,
+        showCta: true,
+        eyebrowLabel: 'Subpantalla',
+        title: 'Check-in en dobles',
         badgeLabel: 'Cargando',
         badgeClass: 'status-pending',
         detail: `${myDayPlayer && (myDayPlayer.fullName || myDayPlayer.name) || 'Jugador seleccionado'} · Sincronizando estado de dobles...`,
@@ -4501,17 +4521,25 @@
       };
     }
 
+    const isCheckinOpen = status === 'awaiting_doubles_confirmation';
+    const hasResolvedPartner = !!(actor && actor.partnerLabel);
+    const summaryBadgeClass = hasResolvedPartner ? 'status-done' : badgeClass;
+
     return {
       disabled: false,
-      badgeLabel: badgeLabel,
-      badgeClass: badgeClass,
+      isInteractive: isCheckinOpen,
+      showCta: isCheckinOpen,
+      eyebrowLabel: isCheckinOpen ? 'Subpantalla' : '',
+      title: isCheckinOpen ? 'Check-in en dobles' : 'Equipo de dobles',
+      badgeLabel: isCheckinOpen ? badgeLabel : '',
+      badgeClass: isCheckinOpen ? badgeClass : summaryBadgeClass,
       detail: actor
-        ? `${actor.name} · ${buildDoublesActorDetail(actor)}`
+        ? `${actor.name} · ${isCheckinOpen ? buildDoublesActorDetail(actor) : buildMyDayDoublesSummaryDetail_(actor)}`
         : `${myDayPlayer && (myDayPlayer.fullName || myDayPlayer.name) || 'Jugador seleccionado'} · Cargando estado de dobles...`,
       ctaLabel: 'Abrir check-in de dobles',
       helperText: status === 'awaiting_doubles_confirmation'
         ? 'La ventana esta activa para confirmar partner, entrar al pool o declinar.'
-        : 'La pantalla conserva el contexto del jugador seleccionado.',
+        : 'Las parejas ya quedaron fijadas y esta tarjeta ahora opera en modo resumen.',
     };
   }
 
