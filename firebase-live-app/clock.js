@@ -97,6 +97,10 @@ function runTournamentClockTickWithOptions_(options) {
   }
 
   try {
+    const submissionProcessingResult = processPendingMatchSubmissions_();
+    const processedSubmissionPlayerIds = Array.isArray(submissionProcessingResult && submissionProcessingResult.impactedPlayerIds)
+      ? submissionProcessingResult.impactedPlayerIds
+      : [];
     const previousCurrentBlock = getCurrentBlock();
     const previousCurrentBlockId = String(previousCurrentBlock && previousCurrentBlock.block_id || '').trim();
     const tickResult = tickTournamentClock();
@@ -110,17 +114,20 @@ function runTournamentClockTickWithOptions_(options) {
     const currentBlockAfterTick = getCurrentBlock();
     const currentBlockAfterTickId = String(currentBlockAfterTick && currentBlockAfterTick.block_id || '').trim();
     const didPublicBlockHandoff = shouldPublishPublicSnapshotAfterTick_(previousCurrentBlockId, currentBlockAfterTickId);
-    const shouldPublishRealtime = opts.publishRealtime !== false || didPublicBlockHandoff;
+    const shouldPublishRealtime = opts.publishRealtime !== false || didPublicBlockHandoff || processedSubmissionPlayerIds.length > 0;
     const publishResult = shouldPublishRealtime
       ? publishRealtimeSnapshotToFirebase()
       : null;
     const myDayPublishResults = didPublicBlockHandoff
       ? publishAllMyDayViewModelsToFirebase()
+      : processedSubmissionPlayerIds.length
+      ? publishPlayerRealtimeViewsToFirebase(processedSubmissionPlayerIds)
       : [];
 
     return {
       ok: true,
       skipped: false,
+      submissionProcessingResult: submissionProcessingResult,
       tickResult: tickResult,
       publishResult: publishResult,
       myDayPublishResults: myDayPublishResults,

@@ -387,17 +387,38 @@ function resolveDiagnosticBlock_(blockId) {
 }
 
 function writeFirebaseNode_(path, payload) {
-  const response = UrlFetchApp.fetch(buildFirebaseUrl_(path), {
-    method: 'put',
-    contentType: 'application/json',
-    payload: JSON.stringify(payload),
+  return requestFirebaseNode_('put', path, payload);
+}
+
+function readFirebaseNode_(path) {
+  const response = requestFirebaseNode_('get', path);
+  const body = String(response.body || '').trim();
+  if (!body || body === 'null') return null;
+  return JSON.parse(body);
+}
+
+function deleteFirebaseNode_(path) {
+  return requestFirebaseNode_('delete', path);
+}
+
+function requestFirebaseNode_(method, path, payload) {
+  const requestMethod = String(method || 'get').toLowerCase();
+  const options = {
+    method: requestMethod,
     muteHttpExceptions: true,
-  });
+  };
+
+  if (typeof payload !== 'undefined') {
+    options.contentType = 'application/json';
+    options.payload = JSON.stringify(payload);
+  }
+
+  const response = UrlFetchApp.fetch(buildFirebaseUrl_(path), options);
   const statusCode = response.getResponseCode();
   const body = response.getContentText();
 
   if (statusCode < 200 || statusCode >= 300) {
-    throw new Error(`Firebase publish failed for ${path} (${statusCode}): ${body}`);
+    throw new Error(`Firebase ${requestMethod.toUpperCase()} failed for ${path} (${statusCode}): ${body}`);
   }
 
   return {

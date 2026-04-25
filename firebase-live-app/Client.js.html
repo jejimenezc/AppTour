@@ -60,6 +60,8 @@
   let realtimeMyDayRef = null;
   let realtimeDoublesRef = null;
   let realtimeSelectorOptionsRef = null;
+  let submissionStatusRef = null;
+  let activeSubmissionId = '';
   let realtimeListenerAttached = false;
   let realtimeMyDayPlayerId = '';
   let realtimeDoublesPlayerId = '';
@@ -1427,6 +1429,9 @@
       walkover: !!source.walkover,
       tableBlocked: !!source.tableBlocked,
       needsReview: !!source.needsReview,
+      pendingSubmission: !!source.pendingSubmission,
+      pendingSubmissionMode: String(source.pendingSubmissionMode || '').trim(),
+      pendingSubmissionAt: String(source.pendingSubmissionAt || '').trim(),
       resultMode: String(source.resultMode || '').trim(),
       closingState: String(source.closingState || '').trim(),
     };
@@ -3909,8 +3914,37 @@
     const m = currentMyDayVm.currentMatch;
     const playerId = currentMyDayVm.player.id;
     const actorRole = resolveUiActorRole(currentMyDayVm);
+    const submission = buildCaptureSubmissionPayload_(m, payload, playerId, actorRole);
+    const submissionValidationError = validateCaptureSubmissionClient_(m, payload, actorRole);
+    if (submissionValidationError) {
+      setCaptureSubmittingState(false);
+      if (errorBox) {
+        errorBox.style.display = 'block';
+        errorBox.textContent = submissionValidationError;
+      }
+      return;
+    }
     setCaptureSubmittingState(true, triggerEl, payload);
 
+    if (db && typeof db.ref === 'function') {
+      db.ref('submissions/pending/' + submission.submissionId)
+        .set(submission)
+        .then(function () {
+          markMyDayMatchSubmissionQueued_(submission);
+          subscribeSubmissionStatus_(submission);
+          requestSubmissionProcessingNudge_();
+          closeMatchCapture();
+        })
+        .catch(function () {
+          submitCapturePayloadViaGas_(submission, errorBox);
+        });
+      return;
+    }
+
+    submitCapturePayloadViaGas_(submission, errorBox);
+  }
+
+  function submitCapturePayloadViaGas_(submission, errorBox) {
     google.script.run
       .withSuccessHandler(function () {
         closeMatchCapture();
@@ -3924,14 +3958,237 @@
         errorBox.textContent = err.message || String(err);
       })
       .submitMatchResultFromUi({
-        matchId: m.matchId,
-        mode: payload.mode,
-        setsA: payload.setsA,
-        setsB: payload.setsB,
-        closingState: payload.closingState,
-        actorPlayerId: playerId,
-        actorRole: actorRole
+        matchId: submission.matchId,
+        mode: submission.mode,
+        setsA: submission.setsA,
+        setsB: submission.setsB,
+        closingState: submission.closingState,
+        actorPlayerId: submission.actorPlayerId,
+        actorRole: submission.actorRole
       });
+  }
+
+  function buildCaptureSubmissionPayload_(match, payload, playerId, actorRole) {
+    const createdAtMs = Date.now();
+    const projectedClock = getProjectedClockSnapshot_() || appHeaderClockSnapshot || {};
+    const currentBlock = currentMyDayVm && currentMyDayVm.currentBlock ? currentMyDayVm.currentBlock : null;
+    const matchId = String(match && (match.matchId || match.id) || '').trim();
+    const mode = String(payload && payload.mode || '').trim();
+    const actorId = String(playerId || '').trim();
+    const role = String(actorRole || '').trim() || 'player';
+    const submissionId = [
+      matchId || 'match',
+      mode || 'mode',
+      actorId || 'actor',
+      String(createdAtMs),
+    ].join('__');
+
+    return {
+      submissionId: submissionId,
+      matchId: matchId,
+      mode: mode,
+      setsA: payload && Object.prototype.hasOwnProperty.call(payload, 'setsA') ? payload.setsA : '',
+      setsB: payload && Object.prototype.hasOwnProperty.call(payload, 'setsB') ? payload.setsB : '',
+      closingState: String(payload && payload.closingState || '').trim(),
+      actorPlayerId: actorId,
+      actorRole: role,
+      blockId: String(currentBlock && currentBlock.id || '').trim(),
+      tournamentStatusAtSubmit: String(currentMyDayVm && currentMyDayVm.tournamentStatus || '').trim(),
+      visualStatusAtSubmit: String(match && match.visualStatus || '').trim(),
+      submittedAtInternalTs: projectedClock && projectedClock.internalNowMs ? formatClockStamp(projectedClock.internalNowMs) : '',
+      submittedAtServerNowTs: projectedClock && projectedClock.realNowMs ? formatClockStamp(projectedClock.realNowMs) : '',
+      createdAt: new Date(createdAtMs).toISOString(),
+      createdAtMs: createdAtMs,
+      source: 'client_firebase_submission',
+    };
+  }
+
+  function validateCaptureSubmissionClient_(match, payload, actorRole) {
+    if (!match) return 'No se encontro el partido para capturar.';
+    if (!canOpenMyDayCapture_(match)) return 'La captura no esta disponible para este partido en este momento.';
+
+    const mode = String(payload && payload.mode || '').trim();
+    const currentMode = String(match && match.eventState && match.eventState.resultMode || '').trim();
+    const currentClosingState = String(match && match.eventState && match.eventState.closingState || '').trim();
+    const currentSetsA = match && Object.prototype.hasOwnProperty.call(match, 'setsA') ? match.setsA : '';
+    const currentSetsB = match && Object.prototype.hasOwnProperty.call(match, 'setsB') ? match.setsB : '';
+
+    if (mode === 'closing_state') {
+      const nextClosingState = String(payload && payload.closingState || '').trim();
+      const allowed = ['A_1_0', 'B_1_0', 'ONE_ONE', 'NOT_STARTED'];
+      if (allowed.indexOf(nextClosingState) === -1) return 'El resultado parcial no es valido.';
+      if (currentMode === 'final') return 'El partido ya tiene un resultado final y no admite un parcial nuevo.';
+      if (currentMode === 'closing_state' && !isClosingStateCompatibleClient_(currentClosingState, nextClosingState)) {
+        return `El estado parcial ${nextClosingState} no es consistente con el parcial previo ${currentClosingState}.`;
+      }
+      return '';
+    }
+
+    if (mode === 'final') {
+      const setsA = Number(payload && payload.setsA);
+      const setsB = Number(payload && payload.setsB);
+      if (!isValidFinalSetsClient_(setsA, setsB)) return 'El resultado final no es valido.';
+      if (currentMode === 'final') {
+        if (String(currentSetsA) !== String(setsA) || String(currentSetsB) !== String(setsB)) {
+          return 'El partido ya tiene un resultado final distinto y no se puede sobrescribir desde esta capa.';
+        }
+        return '';
+      }
+      if (currentMode === 'closing_state' && !isFinalCompatibleWithClosingStateClient_(currentClosingState, setsA, setsB)) {
+        return `El resultado final ${setsA}-${setsB} no es consistente con el parcial ${currentClosingState}.`;
+      }
+      return '';
+    }
+
+    return 'mode no soportado.';
+  }
+
+  function isValidFinalSetsClient_(setsA, setsB) {
+    const a = Number(setsA);
+    const b = Number(setsB);
+    return (a === 2 && b === 0) || (a === 2 && b === 1) || (a === 0 && b === 2) || (a === 1 && b === 2);
+  }
+
+  function isFinalCompatibleWithClosingStateClient_(closingState, setsA, setsB) {
+    const state = String(closingState || '').trim();
+    const a = Number(setsA);
+    const b = Number(setsB);
+
+    if (state === 'NOT_STARTED' || !state) return true;
+    if (state === 'A_1_0') return (a === 2 && b === 0) || (a === 2 && b === 1) || (a === 1 && b === 2);
+    if (state === 'B_1_0') return (a === 0 && b === 2) || (a === 1 && b === 2) || (a === 2 && b === 1);
+    if (state === 'ONE_ONE') return (a === 2 && b === 1) || (a === 1 && b === 2);
+    return false;
+  }
+
+  function isClosingStateCompatibleClient_(previousState, nextState) {
+    const prev = String(previousState || '').trim();
+    const next = String(nextState || '').trim();
+
+    if (!prev || prev === 'NOT_STARTED') return ['NOT_STARTED', 'A_1_0', 'B_1_0', 'ONE_ONE'].indexOf(next) >= 0;
+    if (prev === 'A_1_0') return next === 'A_1_0' || next === 'ONE_ONE';
+    if (prev === 'B_1_0') return next === 'B_1_0' || next === 'ONE_ONE';
+    if (prev === 'ONE_ONE') return next === 'ONE_ONE';
+    return false;
+  }
+
+  function requestSubmissionProcessingNudge_() {
+    if (typeof google === 'undefined' || !google || !google.script || !google.script.run) return;
+
+    google.script.run
+      .withSuccessHandler(function () {})
+      .withFailureHandler(function () {})
+      .runTickAndPublishRealtime();
+  }
+
+  function markMyDayMatchSubmissionQueued_(submission) {
+    if (!currentMyDayVm || !currentMyDayVm.currentMatch || !submission) return;
+
+    const currentMatchId = String(currentMyDayVm.currentMatch.matchId || currentMyDayVm.currentMatch.id || '').trim();
+    if (currentMatchId !== String(submission.matchId || '').trim()) return;
+
+    const nextEventState = Object.assign({}, normalizeMyDayEventState_(currentMyDayVm.currentMatch.eventState), {
+      pendingSubmission: true,
+      pendingSubmissionMode: String(submission.mode || '').trim(),
+      pendingSubmissionAt: String(submission.createdAt || '').trim(),
+    });
+
+    currentMyDayVm = Object.assign({}, currentMyDayVm, {
+      currentMatch: Object.assign({}, currentMyDayVm.currentMatch, {
+        eventState: nextEventState,
+      }),
+    });
+
+    updateMyDayCurrentMatchCard_(buildMyDayVmForClientTime_(currentMyDayVm));
+  }
+
+  function clearSubmissionStatusSubscription_() {
+    if (submissionStatusRef && typeof submissionStatusRef.off === 'function') {
+      submissionStatusRef.off('value');
+    }
+    submissionStatusRef = null;
+    activeSubmissionId = '';
+  }
+
+  function subscribeSubmissionStatus_(submission) {
+    if (!submission || !db || typeof db.ref !== 'function') return;
+    clearSubmissionStatusSubscription_();
+    activeSubmissionId = String(submission.submissionId || '').trim();
+    if (!activeSubmissionId) return;
+    submissionStatusRef = db.ref('submissions/status/' + activeSubmissionId);
+    submissionStatusRef.on('value', function (snapshot) {
+      const value = snapshot && typeof snapshot.val === 'function' ? snapshot.val() : null;
+      handleSubmissionStatusUpdate_(submission, value);
+    }, function () {});
+  }
+
+  function handleSubmissionStatusUpdate_(submission, statusVm) {
+    const status = String(statusVm && statusVm.status || '').trim();
+    if (!status || status === 'processing' || status === 'queued') return;
+    if (String(submission && submission.submissionId || '').trim() !== activeSubmissionId) return;
+
+    clearSubmissionStatusSubscription_();
+
+    if (status === 'processed') {
+      applyProcessedSubmissionAck_(submission);
+      return;
+    }
+
+    applyRejectedSubmissionAck_(statusVm);
+  }
+
+  function applyProcessedSubmissionAck_(submission) {
+    if (!currentMyDayVm || !currentMyDayVm.currentMatch || !submission) return;
+
+    const currentMatchId = String(currentMyDayVm.currentMatch.matchId || currentMyDayVm.currentMatch.id || '').trim();
+    if (currentMatchId !== String(submission.matchId || '').trim()) return;
+
+    const nextEventState = Object.assign({}, normalizeMyDayEventState_(currentMyDayVm.currentMatch.eventState), {
+      pendingSubmission: false,
+      pendingSubmissionMode: '',
+      pendingSubmissionAt: '',
+      resultMode: submission.mode === 'final' ? 'final' : 'closing_state',
+      closingState: submission.mode === 'final' ? '' : String(submission.closingState || '').trim(),
+      resultSubmitted: submission.mode === 'final',
+      autoClosed: false,
+    });
+
+    const nextMatch = Object.assign({}, currentMyDayVm.currentMatch, {
+      eventState: nextEventState,
+      setsA: submission.mode === 'final' ? submission.setsA : '',
+      setsB: submission.mode === 'final' ? submission.setsB : '',
+    });
+
+    currentMyDayVm = Object.assign({}, currentMyDayVm, { currentMatch: nextMatch });
+    updateMyDayCurrentMatchCard_(buildMyDayVmForClientTime_(currentMyDayVm));
+
+  }
+
+  function applyRejectedSubmissionAck_(statusVm) {
+    if (currentMyDayVm && currentMyDayVm.currentMatch) {
+      const nextEventState = Object.assign({}, normalizeMyDayEventState_(currentMyDayVm.currentMatch.eventState), {
+        pendingSubmission: false,
+        pendingSubmissionMode: '',
+        pendingSubmissionAt: '',
+      });
+      currentMyDayVm = Object.assign({}, currentMyDayVm, {
+        currentMatch: Object.assign({}, currentMyDayVm.currentMatch, { eventState: nextEventState }),
+      });
+      updateMyDayCurrentMatchCard_(buildMyDayVmForClientTime_(currentMyDayVm));
+    }
+
+    const message = String(statusVm && statusVm.error || 'No se pudo procesar el envio.').trim();
+    if (message) {
+      window.setTimeout(function () {
+        const errorBox = document.getElementById('capture-error');
+        if (errorBox) {
+          errorBox.style.display = 'block';
+          errorBox.textContent = message;
+          return;
+        }
+        try { window.alert(message); } catch (e) {}
+      }, 80);
+    }
   }
 
   function setCaptureSubmittingState(isSubmitting, triggerEl, payload) {
@@ -4000,6 +4257,16 @@
         label: 'Libre por bye',
         disabled: true,
         helperText: 'Tu pareja no juega este bloque y avanza automaticamente a la siguiente ronda.',
+      };
+    }
+
+
+    const eventState = normalizeMyDayEventState_(vm.currentMatch.eventState);
+    if (eventState.pendingSubmission) {
+      return {
+        label: 'Procesando envio...',
+        disabled: true,
+        helperText: 'El envio ya esta en cola y esperando aplicacion del motor.',
       };
     }
 
@@ -4115,6 +4382,7 @@
 
     const visualStatus = String(match.visualStatus || '').trim();
     const eventState = normalizeMyDayEventState_(match.eventState);
+    if (eventState.pendingSubmission) return false;
     const isCaptureWindow = visualStatus === 'En juego' || visualStatus === 'Cierre en curso';
     const isParticipant = !!(match.isReferee || match.isPlayerA || match.isPlayerB);
     const blockedByEvent = !!(eventState.resultSubmitted || eventState.autoClosed || eventState.tableBlocked);

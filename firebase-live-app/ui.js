@@ -1071,6 +1071,155 @@ function publishStructuralRealtimeAfterMutation_(result) {
   return result;
 }
 
+function processPendingMatchSubmissions_() {
+  const pending = readFirebaseNode_('submissions/pending');
+  if (!pending || typeof pending !== 'object') {
+    return {
+      processedCount: 0,
+      impactedPlayerIds: [],
+      results: [],
+    };
+  }
+
+  const entries = Object.keys(pending)
+    .map(function (submissionId) {
+      const payload = pending[submissionId] && typeof pending[submissionId] === 'object'
+        ? pending[submissionId]
+        : {};
+      return {
+        submissionId: submissionId,
+        payload: payload,
+        createdAtMs: Number(payload.createdAtMs || 0),
+      };
+    })
+    .sort(function (left, right) {
+      const leftTime = Number(left.createdAtMs || 0);
+      const rightTime = Number(right.createdAtMs || 0);
+      if (leftTime !== rightTime) return leftTime - rightTime;
+      return String(left.submissionId || '').localeCompare(String(right.submissionId || ''));
+    });
+
+  const impactedPlayerIds = [];
+  const results = [];
+
+  entries.forEach(function (entry) {
+    const result = processSinglePendingMatchSubmission_(entry.submissionId, entry.payload);
+    results.push(result);
+    (result.impactedPlayerIds || []).forEach(function (playerId) {
+      const normalizedPlayerId = normalizeRealtimePlayerIdSafe_(playerId);
+      if (normalizedPlayerId) impactedPlayerIds.push(normalizedPlayerId);
+    });
+  });
+
+  return {
+    processedCount: results.length,
+    impactedPlayerIds: impactedPlayerIds.filter(onlyUnique_),
+    results: results,
+  };
+}
+
+function processSinglePendingMatchSubmission_(submissionId, payload) {
+  const data = payload && typeof payload === 'object' ? payload : {};
+  const matchId = String(data.matchId || '').trim();
+  const mode = String(data.mode || '').trim();
+  const actorPlayerId = String(data.actorPlayerId || '').trim();
+  const actorRole = String(data.actorRole || '').trim();
+  const result = {
+    submissionId: String(submissionId || '').trim(),
+    matchId: matchId,
+    mode: mode,
+    actorPlayerId: actorPlayerId,
+    actorRole: actorRole,
+    createdAt: String(data.createdAt || '').trim(),
+    createdAtMs: Number(data.createdAtMs || 0),
+    status: 'rejected',
+    error: '',
+    processedAt: nowIso(),
+    impactedPlayerIds: [],
+  };
+
+  try {
+    writeFirebaseNode_(`submissions/status/${result.submissionId}`, {
+      submissionId: result.submissionId,
+      matchId: matchId,
+      mode: mode,
+      status: 'processing',
+      actorPlayerId: actorPlayerId,
+      actorRole: actorRole,
+      updatedAt: nowIso(),
+    });
+
+    const match = getMatchById(matchId);
+    if (!match) {
+      throw new Error(`No existe el match_id=${matchId}`);
+    }
+
+    const impactedPlayerIds = [
+      match.player_a_id,
+      match.player_b_id,
+      match.referee_player_id,
+    ]
+      .map(function (playerId) {
+        return normalizeRealtimePlayerIdSafe_(playerId);
+      })
+      .filter(Boolean)
+      .filter(onlyUnique_);
+
+    validateQueuedMatchSubmissionContext_(match, data);
+
+    if (mode === 'final') {
+      const setsA = Number(data.setsA);
+      const setsB = Number(data.setsB);
+
+      if (Number.isNaN(setsA) || Number.isNaN(setsB)) {
+        throw new Error('Sets invalidos para resultado final.');
+      }
+
+      submitMatchResult(matchId, {
+        mode: 'final',
+        sets_a: setsA,
+        sets_b: setsB,
+        submitted_by: actorPlayerId || 'ui-user',
+        submitted_by_role: actorRole || 'player',
+      });
+    } else if (mode === 'closing_state') {
+      const closingState = String(data.closingState || '').trim();
+
+      submitMatchResult(matchId, {
+        mode: 'closing_state',
+        closing_state: closingState,
+        submitted_by: actorPlayerId || 'ui-user',
+        submitted_by_role: actorRole || 'player',
+      });
+    } else {
+      throw new Error(`mode no soportado: ${mode}`);
+    }
+
+    result.status = 'processed';
+    result.impactedPlayerIds = impactedPlayerIds;
+  } catch (error) {
+    result.status = 'rejected';
+    result.error = error && error.message ? error.message : String(error);
+  } finally {
+    writeFirebaseNode_(`submissions/status/${result.submissionId}`, {
+      submissionId: result.submissionId,
+      matchId: result.matchId,
+      mode: result.mode,
+      status: result.status,
+      error: result.error,
+      actorPlayerId: result.actorPlayerId,
+      actorRole: result.actorRole,
+      impactedPlayerIds: result.impactedPlayerIds,
+      updatedAt: nowIso(),
+      processedAt: result.processedAt,
+    });
+    writeFirebaseNode_(`submissions/history/${result.submissionId}`, result);
+    deleteFirebaseNode_(`submissions/pending/${result.submissionId}`);
+  }
+
+  return result;
+}
+
 function normalizeTournamentStartInput_(rawValue) {
   const value = String(rawValue || '').trim().replace('T', ' ');
   if (!value) {
@@ -1203,6 +1352,51 @@ function validateUiMatchSubmissionContext(match, actorPlayerId, actorRole, mode)
 
   if (blockStatus !== 'live' && blockStatus !== 'closing') {
     throw new Error('La captura solo esta disponible cuando el bloque esta en juego o en cierre.');
+  }
+
+  if (!isReferee && !isPlayer) {
+    throw new Error('El jugador seleccionado no participa en este partido.');
+  }
+
+  if (mode !== 'final' && mode !== 'closing_state') {
+    throw new Error(`mode no soportado: ${mode}`);
+  }
+
+  if (role !== 'player' && role !== 'referee' && role !== 'admin') {
+    throw new Error(`Rol no soportado para captura: ${role}`);
+  }
+
+  if (role === 'referee' && !isReferee) {
+    throw new Error('Solo el arbitro asignado puede capturar con rol de arbitro.');
+  }
+}
+
+function validateQueuedMatchSubmissionContext_(match, payload) {
+  const data = payload || {};
+  const mode = String(data.mode || '').trim();
+  const actorPlayerId = String(data.actorPlayerId || '').trim();
+  const actorRole = String(data.actorRole || '').trim();
+  const submittedBlockId = String(data.blockId || '').trim();
+  const submittedVisualStatus = String(data.visualStatusAtSubmit || '').trim();
+  const submittedInternalTs = normalizeDateTimeText(data.submittedAtInternalTs);
+  const matchBlockId = String(match && match.block_id || '').trim();
+  const playerContext = buildPlayerMatchContext(match, actorPlayerId);
+  const isReferee = playerContext.isReferee;
+  const isPlayer = playerContext.isPlayerA || playerContext.isPlayerB;
+  const role = String(actorRole || '').trim();
+  const block = matchBlockId ? getBlockById(matchBlockId) : null;
+  const hardCloseTs = normalizeDateTimeText(block && block.hard_close_ts);
+
+  if (!submittedBlockId || submittedBlockId !== matchBlockId) {
+    throw new Error('La submission no corresponde al bloque del partido.');
+  }
+
+  if (submittedVisualStatus !== 'En juego' && submittedVisualStatus !== 'Cierre en curso') {
+    throw new Error('La submission fue creada fuera de una ventana valida de captura.');
+  }
+
+  if (submittedInternalTs && hardCloseTs && submittedInternalTs > hardCloseTs) {
+    throw new Error('La submission fue creada despues del hard close del bloque.');
   }
 
   if (!isReferee && !isPlayer) {
