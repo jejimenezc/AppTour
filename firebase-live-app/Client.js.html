@@ -3289,6 +3289,7 @@
     const root = document.getElementById('myday-content');
     const playerRoleUi = getMyDayPlayerRoleUi(derivedVm);
     const matchRoleUi = getMyDayMatchRoleUi(derivedVm);
+    const matchAssignmentRoleLabel = getMyDayMatchAssignmentRoleLabel_(derivedVm);
     const nextCommitment = buildMyDayCommitmentLabel(derivedVm);
     const cta = buildMyDayCta(derivedVm);
     const matchMeta = derivedVm.currentMatch || null;
@@ -3343,6 +3344,7 @@
             <div class="stat-value" style="margin-top: 8px;">
               ${renderResponsiveMatchup(matchMeta)}
             </div>
+            ${matchAssignmentRoleLabel ? `<div class="helper" id="myday-match-role" style="margin-top: 6px;">${escapeHtml(matchAssignmentRoleLabel)}</div>` : '<div class="helper" id="myday-match-role" style="display:none;"></div>'}
             <div class="helper" id="myday-commitment-detail" style="margin-top: 6px;">${escapeHtml(nextCommitment.detail)}</div>
           </div>
 
@@ -3479,16 +3481,27 @@
 
     const commitmentTitleEl = document.getElementById('myday-commitment-title');
     const commitmentDetailEl = document.getElementById('myday-commitment-detail');
+    const matchRoleEl = document.getElementById('myday-match-role');
     const matchCardEl = document.getElementById('myday-match-card');
     const matchBadgeEl = document.getElementById('myday-match-badge');
     const matchCtaEl = document.getElementById('myday-match-cta');
 
     const nextCommitment = buildMyDayCommitmentLabel(vm);
+    const matchAssignmentRoleLabel = getMyDayMatchAssignmentRoleLabel_(vm);
     if (commitmentTitleEl) {
       commitmentTitleEl.textContent = nextCommitment.title;
     }
     if (commitmentDetailEl) {
       commitmentDetailEl.textContent = nextCommitment.detail;
+    }
+    if (matchRoleEl) {
+      if (matchAssignmentRoleLabel) {
+        matchRoleEl.style.display = '';
+        matchRoleEl.textContent = matchAssignmentRoleLabel;
+      } else {
+        matchRoleEl.style.display = 'none';
+        matchRoleEl.textContent = '';
+      }
     }
 
     if (!vm.currentMatch) return;
@@ -3762,6 +3775,14 @@
     }
 
     return { show: false, label: '', className: '' };
+  }
+
+  function getMyDayMatchAssignmentRoleLabel_(vm) {
+    if (!vm || !vm.currentMatch) return '';
+    if (vm.currentMatch.isByeAdvance) return '';
+    if (vm.currentMatch.isReferee) return 'Rol: Arbitro';
+    if (vm.currentMatch.isPlayerA || vm.currentMatch.isPlayerB) return 'Rol: Jugador';
+    return '';
   }
 
   function getMyDayVisualStatusUi_(visualStatus) {
