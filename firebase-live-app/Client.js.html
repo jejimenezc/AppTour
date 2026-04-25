@@ -2525,6 +2525,11 @@
     }
   }
 
+  function shouldRenderDoublesPendingUiActionCard_(pendingAction) {
+    const actionName = String(pendingAction && pendingAction.actionName || '').trim();
+    return actionName !== 'opt_into_pool' && actionName !== 'decline_doubles';
+  }
+
   function renderDoublesConfig(vm) {
     if (!isDoublesVmAlignedWithCurrentSelection_(vm)) return;
 
@@ -2580,7 +2585,7 @@
       </div>
     ` : '';
 
-    const actorPendingUiActionHtml = actorHasPendingServerAck ? `
+    const actorPendingUiActionHtml = actorHasPendingServerAck && shouldRenderDoublesPendingUiActionCard_(pendingUiAction) ? `
       <div class="doubles-action-card doubles-action-card--primary">
         <div class="doubles-action-card__title">${escapeHtml(pendingUiAction.title || 'Actualizando check-in...')}</div>
         <div class="doubles-action-card__detail">${escapeHtml(pendingUiAction.detail || 'Estamos sincronizando tu cambio en Firebase.')}</div>
@@ -2663,7 +2668,7 @@
                 ? 'doubles-row-card doubles-row-card--interactive'
                 : 'doubles-row-card';
               const rowAttrs = isPartnerCandidate
-                ? ` role="button" tabindex="0" onclick="openDoublesPartnerRequestModal('${escapeHtml(row.id)}', '${escapeHtml(row.name)}')" onkeydown="handleDoublesPartnerCardKeydown(event, '${escapeHtml(row.id)}', '${escapeHtml(row.name)}')"`
+                ? ` role="button" tabindex="0" onclick="openDoublesPartnerRequestModal('${escapeInlineJsSingleQuotedString(row.id)}', '${escapeInlineJsSingleQuotedString(row.name)}')" onkeydown="handleDoublesPartnerCardKeydown(event, '${escapeInlineJsSingleQuotedString(row.id)}', '${escapeInlineJsSingleQuotedString(row.name)}')"`
                 : '';
 
               return `
@@ -3114,7 +3119,7 @@
           <div class="helper" style="margin-top: 8px;">Se enviara la solicitud de partner a nombre de ${escapeHtml(actor.name)}.</div>
           <div style="display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 18px;">
             <button class="admin-action-button admin-action-button-secondary" type="button" onclick="closeDoublesPartnerRequestModal()">Cancelar</button>
-            <button class="admin-action-button" type="button" onclick="confirmDoublesPartnerRequest('${escapeHtml(targetPlayerId)}')">Enviar solicitud</button>
+            <button class="admin-action-button" type="button" onclick="confirmDoublesPartnerRequest('${escapeInlineJsSingleQuotedString(targetPlayerId)}')">Enviar solicitud</button>
           </div>
         </div>
       </div>
@@ -5576,5 +5581,15 @@
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#039;');
+  }
+
+  function escapeInlineJsSingleQuotedString(value) {
+    return escapeHtml(
+      String(value == null ? '' : value)
+        .replace(/\\/g, '\\\\')
+        .replace(/\r/g, '\\r')
+        .replace(/\n/g, '\\n')
+        .replace(/'/g, "\\'")
+    );
   }
 </script>
