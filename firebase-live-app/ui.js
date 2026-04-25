@@ -168,6 +168,7 @@ function getResultsHistoryViewModel() {
     const winnerLabel = resolveCompetitorLabel(match.winner_id, match.phase_type);
     return {
       matchId: String(match.match_id || '').trim(),
+      phaseType: String(match.phase_type || '').trim(),
       submittedAt: normalizeDateTimeText(match.submitted_at),
       phaseLabel: buildPublicPhaseLabel(match),
       matchupLabel: buildMatchupLabel(match),
@@ -183,9 +184,9 @@ function getResultsHistoryViewModel() {
     tournamentStatus: tournamentStatus,
     summary: {
       total: items.length,
-      groups: items.filter(function (item) { return item.phaseLabel.indexOf('Grupos') >= 0; }).length,
-      doubles: items.filter(function (item) { return item.phaseLabel.indexOf('Dobles') >= 0; }).length,
-      singles: items.filter(function (item) { return item.phaseLabel.indexOf('Singles') >= 0 && item.phaseLabel.indexOf('Grupos') < 0; }).length,
+      groups: items.filter(function (item) { return item.phaseType === 'groups'; }).length,
+      doubles: items.filter(function (item) { return item.phaseType === 'doubles'; }).length,
+      singles: items.filter(function (item) { return item.phaseType === 'singles'; }).length,
     },
     items: items,
     generatedAt: nowIso(),
