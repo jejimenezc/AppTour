@@ -97,6 +97,10 @@ function runTournamentClockTickWithOptions_(options) {
   }
 
   try {
+    const doublesIntentProcessingResult = processPendingDoublesConfigIntents_();
+    const processedDoublesPlayerIds = Array.isArray(doublesIntentProcessingResult && doublesIntentProcessingResult.impactedPlayerIds)
+      ? doublesIntentProcessingResult.impactedPlayerIds
+      : [];
     const submissionProcessingResult = processPendingMatchSubmissions_();
     const processedSubmissionPlayerIds = Array.isArray(submissionProcessingResult && submissionProcessingResult.impactedPlayerIds)
       ? submissionProcessingResult.impactedPlayerIds
@@ -114,7 +118,10 @@ function runTournamentClockTickWithOptions_(options) {
     const currentBlockAfterTick = getCurrentBlock();
     const currentBlockAfterTickId = String(currentBlockAfterTick && currentBlockAfterTick.block_id || '').trim();
     const didPublicBlockHandoff = shouldPublishPublicSnapshotAfterTick_(previousCurrentBlockId, currentBlockAfterTickId);
-    const shouldPublishRealtime = opts.publishRealtime !== false || didPublicBlockHandoff || processedSubmissionPlayerIds.length > 0;
+    const shouldPublishRealtime = opts.publishRealtime !== false ||
+      didPublicBlockHandoff ||
+      processedSubmissionPlayerIds.length > 0 ||
+      processedDoublesPlayerIds.length > 0;
     const publishResult = shouldPublishRealtime
       ? publishRealtimeSnapshotToFirebase()
       : null;
@@ -123,14 +130,19 @@ function runTournamentClockTickWithOptions_(options) {
       : processedSubmissionPlayerIds.length
       ? publishPlayerRealtimeViewsToFirebase(processedSubmissionPlayerIds)
       : [];
+    const doublesPublishResults = processedDoublesPlayerIds.length
+      ? publishAllDoublesViewModelsToFirebase()
+      : [];
 
     return {
       ok: true,
       skipped: false,
+      doublesIntentProcessingResult: doublesIntentProcessingResult,
       submissionProcessingResult: submissionProcessingResult,
       tickResult: tickResult,
       publishResult: publishResult,
       myDayPublishResults: myDayPublishResults,
+      doublesPublishResults: doublesPublishResults,
     };
   } catch (error) {
     const message = error && error.message ? error.message : String(error);

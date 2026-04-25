@@ -175,6 +175,19 @@ function publishAllMyDayViewModelsToFirebase() {
   });
 }
 
+function publishAllDoublesViewModelsToFirebase() {
+  const normalizedIds = getCheckedInPlayersForSelector()
+    .map(function (player) {
+      return normalizeRealtimePlayerIdSafe_(player && player.id);
+    })
+    .filter(Boolean)
+    .filter(onlyUnique_);
+
+  return normalizedIds.map(function (playerId) {
+    return publishDoublesViewModelToFirebase(playerId);
+  });
+}
+
 function publishRealtimeDebugForPlayer(playerId) {
   const normalizedPlayerId = normalizeRealtimePlayerId_(playerId);
   const snapshotResult = publishRealtimeSnapshotToFirebase();

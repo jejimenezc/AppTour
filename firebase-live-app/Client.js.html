@@ -34,6 +34,7 @@
   let publicHighestSnapshotVersionSeen = '';
   let currentMyDayVm = null;
   let currentSinglesGroupsVm = null;
+  let currentDoublesBaseVm = null;
   let currentDoublesVm = null;
   let currentAdminVm = null;
   let adminActionInFlight = false;
@@ -53,12 +54,16 @@
   let doublesIsLoading = false;
   let doublesLoadingTitle = '';
   let doublesLoadingDetail = '';
+  let currentDoublesPendingUiAction = null;
   let doublesRealtimeSnapshotReceived = false;
   let doublesRealtimeBootstrapTimer = null;
   let db = null;
   let realtimeMatchesRef = null;
   let realtimeMyDayRef = null;
   let realtimeDoublesRef = null;
+  let realtimeDoublesIntentsRef = null;
+  let realtimeDoublesConfirmedRef = null;
+  let realtimeDoublesCheckinRef = null;
   let realtimeSelectorOptionsRef = null;
   let submissionStatusRef = null;
   let activeSubmissionId = '';
@@ -67,6 +72,9 @@
   let realtimeListenerAttached = false;
   let realtimeMyDayPlayerId = '';
   let realtimeDoublesPlayerId = '';
+  let currentDoublesPendingIntents = [];
+  let currentDoublesConfirmedPartnerMap = {};
+  let currentDoublesCheckinStateMap = {};
   let lastRealtimePayload = null;
   let lastRealtimeMatches = [];
   let appHeaderClockSnapshot = null;
@@ -385,6 +393,9 @@
       updateAppHeaderClock();
       updateAdminClockPanel_();
       updateMyDayClockHud();
+      if (currentDoublesBaseVm && isDoublesScreenActive_()) {
+        renderDoublesConfig(currentDoublesBaseVm);
+      }
     }, CLIENT_CLOCK_TICK_MS);
   }
 
@@ -661,6 +672,7 @@
 
       db = firebase.database();
       subscribeRealtimeMatches();
+      subscribeRealtimeDoublesIntents_();
     } catch (error) {
       console.error('No fue posible inicializar Firebase Realtime Database.', error);
       setRefreshIndicator('Error de conexion realtime');
@@ -815,6 +827,124 @@
       if (doublesRealtimeSnapshotReceived) return;
       loadDoublesConfig({ silent: !!silent, forceServer: true, subscribeAfterLoad: true });
     }, MYDAY_REALTIME_BOOT_TIMEOUT_MS);
+  }
+
+  function subscribeRealtimeDoublesIntents_() {
+    if (!db || realtimeDoublesIntentsRef) return;
+
+    realtimeDoublesIntentsRef = db.ref('doubles/intents/proposals');
+    realtimeDoublesIntentsRef.on('value', function (snapshot) {
+      const rawValue = snapshot && typeof snapshot.val === 'function' ? snapshot.val() : null;
+      currentDoublesPendingIntents = normalizeDoublesPendingIntents_(rawValue);
+      renderMyDayDoublesEntryCard();
+      if (currentDoublesBaseVm) {
+        renderDoublesConfig(currentDoublesBaseVm);
+      }
+    }, function (error) {
+      console.error('Error al escuchar intents de dobles en Firebase.', error);
+    });
+
+    realtimeDoublesConfirmedRef = db.ref('doubles/intents/confirmedByPlayer');
+    realtimeDoublesConfirmedRef.on('value', function (snapshot) {
+      const rawValue = snapshot && typeof snapshot.val === 'function' ? snapshot.val() : null;
+      currentDoublesConfirmedPartnerMap = normalizeDoublesConfirmedPartnerMap_(rawValue);
+      renderMyDayDoublesEntryCard();
+      if (currentDoublesBaseVm) {
+        renderDoublesConfig(currentDoublesBaseVm);
+      }
+    }, function (error) {
+      console.error('Error al escuchar confirmaciones de dobles en Firebase.', error);
+    });
+
+    realtimeDoublesCheckinRef = db.ref('doubles/checkin/byPlayer');
+    realtimeDoublesCheckinRef.on('value', function (snapshot) {
+      const rawValue = snapshot && typeof snapshot.val === 'function' ? snapshot.val() : null;
+      currentDoublesCheckinStateMap = normalizeDoublesCheckinStateMap_(rawValue);
+      renderMyDayDoublesEntryCard();
+      if (currentDoublesBaseVm) {
+        renderDoublesConfig(currentDoublesBaseVm);
+      }
+    }, function (error) {
+      console.error('Error al escuchar check-in de dobles en Firebase.', error);
+    });
+  }
+
+  function normalizeDoublesPendingIntents_(rawValue) {
+    if (!rawValue || typeof rawValue !== 'object') return [];
+
+    const nowMs = Date.now();
+
+    return Object.keys(rawValue)
+      .map(function (intentId) {
+        const value = rawValue[intentId] && typeof rawValue[intentId] === 'object'
+          ? rawValue[intentId]
+          : {};
+        return {
+          intentId: String(value.intentId || intentId || '').trim(),
+          action: 'propose_partner',
+          actorPlayerId: String(value.fromPlayerId || value.actorPlayerId || '').trim(),
+          targetPlayerId: String(value.toPlayerId || value.targetPlayerId || '').trim(),
+          status: 'active',
+          createdAt: String(value.createdAt || '').trim(),
+          createdAtMs: Number(value.createdAtMs || 0),
+          expiresAtMs: Number(value.expiresAtMs || 0),
+        };
+      })
+      .filter(function (intent) {
+        return !!intent.intentId &&
+          !!intent.actorPlayerId &&
+          !!intent.targetPlayerId &&
+          intent.expiresAtMs > nowMs;
+      })
+      .sort(function (left, right) {
+        if (left.createdAtMs !== right.createdAtMs) return right.createdAtMs - left.createdAtMs;
+        return String(right.intentId || '').localeCompare(String(left.intentId || ''));
+      });
+  }
+
+  function getCurrentActiveDoublesPendingIntents_() {
+    const nowMs = Date.now();
+    currentDoublesPendingIntents = (currentDoublesPendingIntents || []).filter(function (intent) {
+      return Number(intent && intent.expiresAtMs || 0) > nowMs;
+    });
+    return currentDoublesPendingIntents;
+  }
+
+  function normalizeDoublesConfirmedPartnerMap_(rawValue) {
+    if (!rawValue || typeof rawValue !== 'object') return {};
+
+    const partnerMap = {};
+
+    Object.keys(rawValue).forEach(function (playerId) {
+      const value = rawValue[playerId] && typeof rawValue[playerId] === 'object'
+        ? rawValue[playerId]
+        : {};
+      const normalizedPlayerId = String(value.playerId || playerId || '').trim();
+      const partnerId = String(value.partnerId || '').trim();
+      if (!normalizedPlayerId || !partnerId) return;
+      partnerMap[normalizedPlayerId] = partnerId;
+    });
+
+    return partnerMap;
+  }
+
+  function normalizeDoublesCheckinStateMap_(rawValue) {
+    if (!rawValue || typeof rawValue !== 'object') return {};
+
+    const checkinMap = {};
+
+    Object.keys(rawValue).forEach(function (playerId) {
+      const value = rawValue[playerId] && typeof rawValue[playerId] === 'object'
+        ? rawValue[playerId]
+        : {};
+      const normalizedPlayerId = String(value.playerId || playerId || '').trim();
+      const status = String(value.status || '').trim();
+      if (!normalizedPlayerId) return;
+      if (status !== 'eligible' && status !== 'pool' && status !== 'opted_out') return;
+      checkinMap[normalizedPlayerId] = status;
+    });
+
+    return checkinMap;
   }
 
   function normalizeRealtimeMatchesPayload(payload) {
@@ -1831,6 +1961,8 @@
     if (!root) return;
 
     if (!playerId) {
+      clearCurrentDoublesPendingUiAction_();
+      currentDoublesBaseVm = null;
       currentDoublesVm = null;
       doublesIsLoading = false;
       renderMyDayDoublesEntryCard();
@@ -1861,6 +1993,7 @@
 
     const preserveVisibleState = silent && !!currentDoublesVm;
     if (!preserveVisibleState) {
+      currentDoublesBaseVm = null;
       currentDoublesVm = null;
     }
     doublesIsLoading = true;
@@ -1878,6 +2011,7 @@
     google.script.run
       .withSuccessHandler(function (vm) {
         if (requestId !== doublesLoadRequestActive) return;
+        if (!isDoublesVmAlignedWithCurrentSelection_(vm, playerId)) return;
         doublesIsLoading = false;
         renderDoublesConfig(vm);
         if (db && subscribeAfterLoad) {
@@ -2126,21 +2260,292 @@
       });
   }
 
+  function getActiveProposalIntentByPlayer_(playerId) {
+    const normalizedPlayerId = String(playerId || '').trim();
+    if (!normalizedPlayerId) return null;
+
+    const proposals = getCurrentActiveDoublesPendingIntents_().filter(function (intent) {
+      return intent.action === 'propose_partner' &&
+        (intent.actorPlayerId === normalizedPlayerId || intent.targetPlayerId === normalizedPlayerId);
+    });
+    if (!proposals.length) return null;
+
+    const incoming = proposals.find(function (intent) {
+      return String(intent.targetPlayerId || '').trim() === normalizedPlayerId;
+    });
+    if (incoming) return incoming;
+
+    const outgoing = proposals.find(function (intent) {
+      return String(intent.actorPlayerId || '').trim() === normalizedPlayerId;
+    });
+    return outgoing || proposals[0];
+  }
+
+  function isPlayerLockedByTransientDoublesIntent_(playerId) {
+    const normalizedPlayerId = String(playerId || '').trim();
+    if (!normalizedPlayerId) return false;
+
+    if (currentDoublesConfirmedPartnerMap[normalizedPlayerId]) return true;
+
+    return getCurrentActiveDoublesPendingIntents_().some(function (intent) {
+      return intent.action === 'propose_partner' &&
+        (intent.actorPlayerId === normalizedPlayerId || intent.targetPlayerId === normalizedPlayerId);
+    });
+  }
+
+  function getDoublesCheckinStatusLabel_(status) {
+    if (status === 'pool') return 'Pool';
+    if (status === 'opted_out') return 'Declino';
+    if (status === 'eligible') return 'Disponible';
+    return status || 'Sin estado';
+  }
+
+  function buildTransientDoublesRowDetail_(status) {
+    if (status === 'pool') return 'Asignacion automatica';
+    if (status === 'opted_out') return 'Declino competir en dobles';
+    if (status === 'eligible') return 'Sin partner aun';
+    return '';
+  }
+
+  function buildTransientDoublesAvailableActions_(status, requestToId, requestFromId) {
+    return {
+      canChoosePartner: status === 'eligible' || status === 'pool' || (status === 'partner_pending' && !!requestToId),
+      canOptIntoPool: status === 'eligible' || status === 'partner_pending',
+      canDecline: status !== 'blocked' && status !== 'partner_confirmed' && status !== 'opted_out',
+      canConfirmPartner: status === 'partner_pending' && !!requestFromId,
+      canRejectPartner: status === 'partner_pending' && !!requestFromId,
+      canResetToEligible: status === 'pool' || status === 'opted_out' || (status === 'partner_pending' && !!requestToId),
+    };
+  }
+
+  function buildTransientDoublesVm_(vm) {
+    const baseVm = vm && typeof vm === 'object' ? Object.assign({}, vm) : {};
+    const actor = baseVm.actor && typeof baseVm.actor === 'object'
+      ? Object.assign({}, baseVm.actor)
+      : null;
+    const rows = Array.isArray(baseVm.rows)
+      ? baseVm.rows.map(function (row) { return Object.assign({}, row); })
+      : [];
+    const rowLookup = {};
+    const confirmedPartnerMap = currentDoublesConfirmedPartnerMap || {};
+    const checkinStateMap = currentDoublesCheckinStateMap || {};
+
+    rows.forEach(function (row) {
+      const rowId = String(row && row.id || '').trim();
+      if (!rowId) return;
+      const checkinStatus = String(checkinStateMap[rowId] || '').trim();
+      if (checkinStatus === 'pool' || checkinStatus === 'opted_out' || checkinStatus === 'eligible') {
+        row.status = checkinStatus;
+        row.statusLabel = getDoublesCheckinStatusLabel_(checkinStatus);
+        row.detail = buildTransientDoublesRowDetail_(checkinStatus);
+      }
+      rowLookup[rowId] = row;
+    });
+
+    const lockedPlayerIds = {};
+    getCurrentActiveDoublesPendingIntents_().forEach(function (intent) {
+      if (intent.action !== 'propose_partner') return;
+
+      const actorId = String(intent.actorPlayerId || '').trim();
+      const targetId = String(intent.targetPlayerId || '').trim();
+      const actorRow = rowLookup[actorId] || null;
+      const targetRow = rowLookup[targetId] || null;
+      const actorName = actorRow ? actorRow.name : actorId;
+      const targetName = targetRow ? targetRow.name : targetId;
+
+      if (actorId) lockedPlayerIds[actorId] = true;
+      if (targetId) lockedPlayerIds[targetId] = true;
+
+      if (actorRow && actorRow.status !== 'partner_confirmed') {
+        actorRow.status = 'partner_pending';
+        actorRow.statusLabel = 'Esperando confirmacion';
+        actorRow.detail = `Solicitud enviada a ${targetName}`;
+      }
+
+      if (targetRow && targetRow.status !== 'partner_confirmed') {
+        targetRow.status = 'partner_pending';
+        targetRow.statusLabel = 'Esperando confirmacion';
+        targetRow.detail = `Solicitud recibida de ${actorName}`;
+      }
+    });
+
+    Object.keys(confirmedPartnerMap).forEach(function (playerId) {
+      const row = rowLookup[playerId];
+      if (!row) return;
+      const partnerId = String(confirmedPartnerMap[playerId] || '').trim();
+      const partnerRow = rowLookup[partnerId] || null;
+      const partnerName = partnerRow ? partnerRow.name : partnerId;
+      row.status = 'partner_confirmed';
+      row.statusLabel = 'Confirmado';
+      row.detail = partnerName ? `Partner confirmado: ${partnerName}` : 'Partner confirmado';
+    });
+
+    let nextActor = actor;
+    if (actor) {
+      const actorIntent = getActiveProposalIntentByPlayer_(actor.id);
+      const actorConfirmedPartnerId = String(confirmedPartnerMap[String(actor.id || '').trim()] || '').trim();
+      const actorCheckinStatus = String(checkinStateMap[String(actor.id || '').trim()] || '').trim();
+
+      if (actorConfirmedPartnerId) {
+        const confirmedPartnerRow = rowLookup[actorConfirmedPartnerId] || null;
+        nextActor = Object.assign({}, actor, {
+          status: 'partner_confirmed',
+          statusLabel: 'Confirmado',
+          partnerLabel: confirmedPartnerRow ? confirmedPartnerRow.name : actorConfirmedPartnerId,
+          partnerId: actorConfirmedPartnerId,
+          requestToId: '',
+          requestToLabel: '',
+          requestFromId: '',
+          requestFromLabel: '',
+          availableActions: Object.assign({}, actor.availableActions || {}, {
+            canChoosePartner: false,
+            canOptIntoPool: false,
+            canConfirmPartner: false,
+            canRejectPartner: false,
+          }),
+        });
+      } else if (actorIntent && actor.status !== 'partner_confirmed') {
+        const actorId = String(actor.id || '').trim();
+        const isRequester = actorIntent.actorPlayerId === actorId;
+        const counterpartyId = isRequester ? actorIntent.targetPlayerId : actorIntent.actorPlayerId;
+        const counterpartyRow = rowLookup[counterpartyId] || null;
+        const counterpartyName = counterpartyRow ? counterpartyRow.name : counterpartyId;
+
+        nextActor = Object.assign({}, actor, {
+          status: 'partner_pending',
+          statusLabel: 'Esperando confirmacion',
+          partnerLabel: '',
+          partnerId: '',
+          requestToId: isRequester ? counterpartyId : '',
+          requestToLabel: isRequester ? counterpartyName : '',
+          requestFromId: isRequester ? '' : counterpartyId,
+          requestFromLabel: isRequester ? '' : counterpartyName,
+          availableActions: Object.assign(
+            {},
+            buildTransientDoublesAvailableActions_('partner_pending', isRequester ? counterpartyId : '', isRequester ? '' : counterpartyId),
+            {
+              canChoosePartner: false,
+              canOptIntoPool: false,
+              canConfirmPartner: !isRequester,
+              canRejectPartner: !isRequester,
+            }
+          ),
+        });
+      } else if ((actorCheckinStatus === 'pool' || actorCheckinStatus === 'opted_out' || actorCheckinStatus === 'eligible') && actor.status !== 'partner_confirmed') {
+        nextActor = Object.assign({}, actor, {
+          status: actorCheckinStatus,
+          statusLabel: getDoublesCheckinStatusLabel_(actorCheckinStatus),
+          partnerLabel: '',
+          partnerId: '',
+          requestToId: '',
+          requestToLabel: '',
+          requestFromId: '',
+          requestFromLabel: '',
+          availableActions: buildTransientDoublesAvailableActions_(actorCheckinStatus, '', ''),
+        });
+      }
+
+      const filteredPartnerOptions = Array.isArray(nextActor.partnerOptions)
+        ? nextActor.partnerOptions.filter(function (option) {
+            const optionId = String(option && option.id || '').trim();
+            if (!optionId) return false;
+            if (!lockedPlayerIds[optionId]) return true;
+            return nextActor.requestToId && optionId === String(nextActor.requestToId || '').trim();
+          })
+        : [];
+
+      nextActor = Object.assign({}, nextActor, {
+        partnerOptions: filteredPartnerOptions,
+      });
+    }
+
+    const recomputedSummary = {
+      eligible: 0,
+      pool: 0,
+      pending: 0,
+      confirmed: 0,
+    };
+
+    rows.forEach(function (row) {
+      const status = String(row && row.status || '').trim();
+      if (status === 'partner_confirmed') recomputedSummary.confirmed++;
+      else if (status === 'partner_pending') recomputedSummary.pending++;
+      else if (status === 'pool') recomputedSummary.pool++;
+      else if (status === 'eligible') recomputedSummary.eligible++;
+    });
+
+    return Object.assign({}, baseVm, {
+      actor: nextActor,
+      rows: rows,
+      summary: Object.assign({}, baseVm.summary || {}, recomputedSummary),
+    });
+  }
+
+  function isDoublesVmAlignedWithCurrentSelection_(vm, expectedPlayerId) {
+    const selectedPlayerId = String(expectedPlayerId || getSavedPlayerId() || '').trim();
+    if (!selectedPlayerId) return false;
+
+    const actorId = String(vm && vm.actor && vm.actor.id || '').trim();
+    return !!actorId && actorId === selectedPlayerId;
+  }
+
+  function setCurrentDoublesPendingUiAction_(actionName, playerId, title, detail) {
+    const normalizedPlayerId = String(playerId || '').trim();
+    if (!normalizedPlayerId) {
+      currentDoublesPendingUiAction = null;
+      return;
+    }
+
+    currentDoublesPendingUiAction = {
+      actionName: String(actionName || '').trim(),
+      playerId: normalizedPlayerId,
+      title: String(title || '').trim(),
+      detail: String(detail || '').trim(),
+      startedAtMs: Date.now(),
+    };
+  }
+
+  function getCurrentDoublesPendingUiAction_(playerId) {
+    const normalizedPlayerId = String(playerId || '').trim();
+    const pendingAction = currentDoublesPendingUiAction;
+    if (!pendingAction || !normalizedPlayerId) return null;
+    return String(pendingAction.playerId || '').trim() === normalizedPlayerId ? pendingAction : null;
+  }
+
+  function clearCurrentDoublesPendingUiAction_(playerId) {
+    if (!currentDoublesPendingUiAction) return;
+    if (!playerId) {
+      currentDoublesPendingUiAction = null;
+      return;
+    }
+
+    const normalizedPlayerId = String(playerId || '').trim();
+    if (String(currentDoublesPendingUiAction.playerId || '').trim() === normalizedPlayerId) {
+      currentDoublesPendingUiAction = null;
+    }
+  }
+
   function renderDoublesConfig(vm) {
-    currentDoublesVm = vm;
+    if (!isDoublesVmAlignedWithCurrentSelection_(vm)) return;
+
+    currentDoublesBaseVm = vm && typeof vm === 'object' ? Object.assign({}, vm) : vm;
+    currentDoublesVm = buildTransientDoublesVm_(currentDoublesBaseVm);
     doublesIsLoading = false;
     renderMyDayDoublesEntryCard();
 
     const root = document.getElementById('doubles-config-content');
     if (!root) return;
 
-    const actor = vm.actor || null;
+    const viewVm = currentDoublesVm || {};
+    const actor = viewVm.actor || null;
+    const pendingUiAction = getCurrentDoublesPendingUiAction_(actor && actor.id);
     const partnerOptionIds = actor && actor.partnerOptions
       ? actor.partnerOptions.map(function (option) { return String(option.id || ''); })
       : [];
     const actorHasIncomingRequest = !!actor && actor.status === 'partner_pending' && !!actor.requestFromId;
     const actorHasOutgoingRequest = !!actor && actor.status === 'partner_pending' && !!actor.requestToId && !actor.requestFromId;
-    const actorIsInteractionLocked = actorHasIncomingRequest || actorHasOutgoingRequest;
+    const actorHasPendingServerAck = !!pendingUiAction;
+    const actorIsInteractionLocked = actorHasIncomingRequest || actorHasOutgoingRequest || actorHasPendingServerAck;
 
     const actorCardHtml = actor ? `
       <div class="card-soft doubles-panel doubles-actor-card">
@@ -2175,14 +2580,23 @@
       </div>
     ` : '';
 
+    const actorPendingUiActionHtml = actorHasPendingServerAck ? `
+      <div class="doubles-action-card doubles-action-card--primary">
+        <div class="doubles-action-card__title">${escapeHtml(pendingUiAction.title || 'Actualizando check-in...')}</div>
+        <div class="doubles-action-card__detail">${escapeHtml(pendingUiAction.detail || 'Estamos sincronizando tu cambio en Firebase.')}</div>
+        <div class="doubles-action-card__meta">Sincronizando check-in</div>
+      </div>
+    ` : '';
+
     const actionButtons = actor ? `
       <div class="card-soft doubles-panel doubles-actions-panel">
         <div class="stat-label" style="margin-bottom: 10px;">Acciones</div>
         <div class="doubles-action-card-grid">
-          ${actor.availableActions.canConfirmPartner ? renderDoublesActionCard('Aceptar solicitud', `Aceptar solicitud de ${actor.requestFromLabel || 'partner'}.`, 'confirm_partner', 'warning') : ''}
-          ${actor.availableActions.canRejectPartner ? renderDoublesActionCard('Rechazar solicitud', `No aceptar solicitud de ${actor.requestFromLabel || 'partner'}.`, 'reject_partner', 'danger') : ''}
+          ${!actorHasPendingServerAck && actor.availableActions.canConfirmPartner ? renderDoublesActionCard('Aceptar solicitud', `Aceptar solicitud de ${actor.requestFromLabel || 'partner'}.`, 'confirm_partner', 'warning') : ''}
+          ${!actorHasPendingServerAck && actor.availableActions.canRejectPartner ? renderDoublesActionCard('Rechazar solicitud', `No aceptar solicitud de ${actor.requestFromLabel || 'partner'}.`, 'reject_partner', 'danger') : ''}
           ${!actorIsInteractionLocked && actor.availableActions.canOptIntoPool ? renderDoublesActionCard('Asigname un partner al azar', 'Entrar al pool para asignacion automatica al cierre.', 'opt_into_pool', 'primary') : ''}
           ${!actorIsInteractionLocked && actor.availableActions.canDecline ? renderDoublesActionCard('Declino competir en dobles', 'Salir del proceso de dobles por ahora.', 'decline_doubles', 'neutral') : ''}
+          ${!actorHasPendingServerAck && !actorIsInteractionLocked && actor.availableActions.canResetToEligible ? renderDoublesActionCard('Volver a disponible', 'Salir del pool o revertir tu decision para volver a elegir partner.', 'back_to_eligible', 'neutral') : ''}
         </div>
       </div>
     ` : '';
@@ -2192,19 +2606,19 @@
         <div class="grid-stats doubles-summary-grid">
           <div class="stat doubles-stat">
             <div class="stat-label">Eligible</div>
-            <div class="stat-value">${escapeHtml(vm.summary.eligible)}</div>
+            <div class="stat-value">${escapeHtml(viewVm.summary && viewVm.summary.eligible || 0)}</div>
           </div>
           <div class="stat doubles-stat">
             <div class="stat-label">Pool</div>
-            <div class="stat-value">${escapeHtml(vm.summary.pool)}</div>
+            <div class="stat-value">${escapeHtml(viewVm.summary && viewVm.summary.pool || 0)}</div>
           </div>
           <div class="stat doubles-stat">
             <div class="stat-label">Pending</div>
-            <div class="stat-value">${escapeHtml(vm.summary.pending)}</div>
+            <div class="stat-value">${escapeHtml(viewVm.summary && viewVm.summary.pending || 0)}</div>
           </div>
           <div class="stat doubles-stat">
             <div class="stat-label">Confirmed</div>
-            <div class="stat-value">${escapeHtml(vm.summary.confirmed)}</div>
+            <div class="stat-value">${escapeHtml(viewVm.summary && viewVm.summary.confirmed || 0)}</div>
           </div>
         </div>
 
@@ -2220,8 +2634,10 @@
 
         ${actorWaitingHtml}
 
+        ${actorPendingUiActionHtml}
+
         <div class="card-soft doubles-panel doubles-note-card">
-          <div class="helper">${escapeHtml(vm.statusNote || '')}</div>
+          <div class="helper">${escapeHtml(viewVm.statusNote || '')}</div>
         </div>
 
         ${actionButtons}
@@ -2231,12 +2647,15 @@
           <div class="doubles-section-title">Elegir Partner</div>
           <div class="helper doubles-section-copy" style="margin-top: 6px;">Revisa disponibilidad y toca una card para enviar una solicitud de partner.</div>
           <div class="stack" style="gap: 10px;">
-            ${(vm.rows || []).map(function (row) {
+            ${(viewVm.rows || []).map(function (row) {
               const isPartnerCandidate = !!actor &&
                 !!actor.availableActions &&
                 !!actor.availableActions.canChoosePartner &&
                 !actorIsInteractionLocked &&
-                partnerOptionIds.indexOf(String(row.id || '')) >= 0;
+                partnerOptionIds.indexOf(String(row.id || '')) >= 0 &&
+                String(row.status || '').trim() !== 'pool' &&
+                String(row.status || '').trim() !== 'opted_out' &&
+                !isPlayerLockedByTransientDoublesIntent_(row.id);
               const isAwaitingThisRow = !!actor &&
                 actor.status === 'partner_pending' &&
                 String(actor.requestToId || '') === String(row.id || '');
@@ -2265,6 +2684,7 @@
   }
 
   function renderDoublesConfigError(error) {
+    clearCurrentDoublesPendingUiAction_(getSavedPlayerId());
     doublesIsLoading = false;
     renderMyDayDoublesEntryCard();
     const root = document.getElementById('doubles-config-content');
@@ -2275,6 +2695,296 @@
 
   function submitDoublesConfigAction(action) {
     submitDoublesConfigActionWithTarget(action, '');
+  }
+
+  function buildDoublesProposalPayload_(playerId, targetPlayerId) {
+    const createdAtMs = Date.now();
+    const actorPlayerId = String(playerId || '').trim();
+    const normalizedTargetPlayerId = String(targetPlayerId || '').trim();
+    const expiresAtMs = createdAtMs + (2 * 60 * 1000);
+
+    return {
+      intentId: [
+        'proposal',
+        actorPlayerId || 'actor',
+        normalizedTargetPlayerId || 'target',
+        String(createdAtMs),
+      ].join('__'),
+      fromPlayerId: actorPlayerId,
+      toPlayerId: normalizedTargetPlayerId,
+      createdAt: new Date(createdAtMs).toISOString(),
+      createdAtMs: createdAtMs,
+      expiresAtMs: expiresAtMs,
+      source: 'client_firebase_proposal',
+    };
+  }
+
+  function enqueueLocalDoublesProposal_(intent) {
+    if (!intent || !intent.intentId) return;
+
+    const nextIntent = {
+      intentId: String(intent.intentId || '').trim(),
+      action: 'propose_partner',
+      actorPlayerId: String(intent.fromPlayerId || '').trim(),
+      targetPlayerId: String(intent.toPlayerId || '').trim(),
+      status: 'active',
+      createdAt: String(intent.createdAt || '').trim(),
+      createdAtMs: Number(intent.createdAtMs || 0),
+      expiresAtMs: Number(intent.expiresAtMs || 0),
+    };
+
+    currentDoublesPendingIntents = [nextIntent].concat(
+      getCurrentActiveDoublesPendingIntents_().filter(function (entry) {
+        return String(entry.intentId || '').trim() !== nextIntent.intentId;
+      })
+    );
+  }
+
+  function submitDoublesProposal_(proposal, playerId, targetPlayerId) {
+    if (!db || typeof db.ref !== 'function') {
+      submitDoublesConfigActionViaGas_('propose_partner', playerId, targetPlayerId);
+      return;
+    }
+
+    db.ref('doubles/intents/proposals/' + proposal.intentId)
+      .set(proposal)
+      .then(function () {
+        doublesIsLoading = false;
+        enqueueLocalDoublesProposal_(proposal);
+        if (currentDoublesBaseVm) {
+          renderDoublesConfig(currentDoublesBaseVm);
+        } else {
+          renderMyDayDoublesEntryCard();
+        }
+      })
+      .catch(function () {
+        submitDoublesConfigActionViaGas_('propose_partner', playerId, targetPlayerId);
+      });
+  }
+
+  function findIncomingDoublesProposalForPlayer_(playerId) {
+    const normalizedPlayerId = String(playerId || '').trim();
+    if (!normalizedPlayerId) return null;
+
+    const incoming = getCurrentActiveDoublesPendingIntents_().filter(function (intent) {
+      return String(intent.targetPlayerId || '').trim() === normalizedPlayerId;
+    });
+
+    return incoming.length ? incoming[0] : null;
+  }
+
+  function buildDoublesConfirmedPairPayload_(leftPlayerId, rightPlayerId) {
+    const pair = [String(leftPlayerId || '').trim(), String(rightPlayerId || '').trim()].sort();
+    const confirmedAt = new Date().toISOString();
+    const pairId = pair.join('__');
+
+    return {
+      pairId: pairId,
+      confirmedAt: confirmedAt,
+      players: pair,
+      leftPlayerId: pair[0],
+      rightPlayerId: pair[1],
+      source: 'client_firebase_confirmed',
+    };
+  }
+
+  function reserveDoublesConfirmedPlayer_(playerId, pairPayload) {
+    const normalizedPlayerId = String(playerId || '').trim();
+    if (!normalizedPlayerId) {
+      return Promise.reject(new Error('playerId requerido para confirmar dobles.'));
+    }
+
+    return new Promise(function (resolve, reject) {
+      db.ref('doubles/intents/confirmedByPlayer/' + normalizedPlayerId)
+        .transaction(function (currentValue) {
+          if (!currentValue) {
+            return {
+              playerId: normalizedPlayerId,
+              partnerId: normalizedPlayerId === pairPayload.leftPlayerId ? pairPayload.rightPlayerId : pairPayload.leftPlayerId,
+              pairId: pairPayload.pairId,
+              confirmedAt: pairPayload.confirmedAt,
+            };
+          }
+
+          const currentPairId = String(currentValue.pairId || '').trim();
+          if (currentPairId === pairPayload.pairId) {
+            return currentValue;
+          }
+
+          return;
+        }, function (error, committed) {
+          if (error) {
+            reject(error);
+            return;
+          }
+          if (!committed) {
+            reject(new Error('El jugador ya no estaba libre para confirmar esta pareja.'));
+            return;
+          }
+          resolve(true);
+        }, false);
+    });
+  }
+
+  function releaseDoublesConfirmedPlayer_(playerId) {
+    const normalizedPlayerId = String(playerId || '').trim();
+    if (!normalizedPlayerId || !db || typeof db.ref !== 'function') return Promise.resolve();
+    return db.ref('doubles/intents/confirmedByPlayer/' + normalizedPlayerId).remove();
+  }
+
+  function finalizeDoublesConfirmedPair_(pairPayload, proposal) {
+    const updates = {};
+    updates['doubles/intents/confirmedPairs/' + pairPayload.pairId] = pairPayload;
+
+    getCurrentActiveDoublesPendingIntents_().forEach(function (intent) {
+      const actorId = String(intent.actorPlayerId || '').trim();
+      const targetId = String(intent.targetPlayerId || '').trim();
+      if (
+        actorId === pairPayload.leftPlayerId ||
+        actorId === pairPayload.rightPlayerId ||
+        targetId === pairPayload.leftPlayerId ||
+        targetId === pairPayload.rightPlayerId
+      ) {
+        updates['doubles/intents/proposals/' + intent.intentId] = null;
+      }
+    });
+
+    if (proposal && proposal.intentId) {
+      updates['doubles/intents/proposals/' + proposal.intentId] = null;
+    }
+
+    return db.ref().update(updates);
+  }
+
+  function confirmDoublesProposal_(playerId) {
+    if (!db || typeof db.ref !== 'function') {
+      submitDoublesConfigActionViaGas_('confirm_partner', playerId, '');
+      return;
+    }
+
+    const proposal = findIncomingDoublesProposalForPlayer_(playerId);
+    if (!proposal) {
+      doublesIsLoading = false;
+      renderMyDayDoublesEntryCard();
+      try { window.alert('La solicitud ya no estaba disponible para confirmar.'); } catch (error) {}
+      return;
+    }
+
+    const pairPayload = buildDoublesConfirmedPairPayload_(proposal.actorPlayerId, proposal.targetPlayerId);
+
+    reserveDoublesConfirmedPlayer_(pairPayload.leftPlayerId, pairPayload)
+      .then(function () {
+        return reserveDoublesConfirmedPlayer_(pairPayload.rightPlayerId, pairPayload)
+          .catch(function (error) {
+            return releaseDoublesConfirmedPlayer_(pairPayload.leftPlayerId).then(function () {
+              throw error;
+            });
+          });
+      })
+      .then(function () {
+        doublesIsLoading = false;
+        return finalizeDoublesConfirmedPair_(pairPayload, proposal);
+      })
+      .then(function () {
+        renderMyDayDoublesEntryCard();
+      })
+      .catch(function () {
+        doublesIsLoading = false;
+        renderMyDayDoublesEntryCard();
+        try { window.alert('No fue posible confirmar la pareja porque uno de los jugadores ya dejo de estar libre.'); } catch (error) {}
+      });
+  }
+
+  function rejectDoublesProposal_(playerId) {
+    if (!db || typeof db.ref !== 'function') {
+      submitDoublesConfigActionViaGas_('reject_partner', playerId, '');
+      return;
+    }
+
+    const proposal = findIncomingDoublesProposalForPlayer_(playerId);
+    if (!proposal) {
+      doublesIsLoading = false;
+      renderMyDayDoublesEntryCard();
+      return;
+    }
+
+    db.ref('doubles/intents/proposals/' + proposal.intentId)
+      .remove()
+      .then(function () {
+        doublesIsLoading = false;
+        renderMyDayDoublesEntryCard();
+      })
+      .catch(function () {
+        submitDoublesConfigActionViaGas_('reject_partner', playerId, '');
+      });
+  }
+
+  function applyLocalDoublesCheckinState_(playerId, status) {
+    const normalizedPlayerId = String(playerId || '').trim();
+    if (!normalizedPlayerId) return;
+
+    if (!status || status === 'eligible') {
+      delete currentDoublesCheckinStateMap[normalizedPlayerId];
+    } else {
+      currentDoublesCheckinStateMap[normalizedPlayerId] = String(status || '').trim();
+    }
+  }
+
+  function submitDoublesCheckinState_(action, playerId) {
+    const normalizedPlayerId = String(playerId || '').trim();
+    if (!normalizedPlayerId || !db || typeof db.ref !== 'function') {
+      renderDoublesConfigError(new Error('No fue posible actualizar el check-in de dobles en Firebase.'));
+      return;
+    }
+
+    const normalizedAction = String(action || '').trim();
+    const nextStatus = normalizedAction === 'opt_into_pool'
+      ? 'pool'
+      : normalizedAction === 'decline_doubles'
+        ? 'opted_out'
+        : 'eligible';
+
+    const ref = db.ref('doubles/checkin/byPlayer/' + normalizedPlayerId);
+    const operation = ref.set({
+      playerId: normalizedPlayerId,
+      status: nextStatus,
+      updatedAt: new Date().toISOString(),
+      source: 'client_firebase_checkin',
+    });
+
+    operation
+      .then(function () {
+        applyLocalDoublesCheckinState_(normalizedPlayerId, nextStatus);
+        clearCurrentDoublesPendingUiAction_(normalizedPlayerId);
+        doublesIsLoading = false;
+        if (currentDoublesBaseVm) {
+          renderDoublesConfig(currentDoublesBaseVm);
+        } else {
+          renderMyDayDoublesEntryCard();
+        }
+      })
+      .catch(function (error) {
+        clearCurrentDoublesPendingUiAction_(normalizedPlayerId);
+        doublesIsLoading = false;
+        renderDoublesConfigError(error);
+      });
+  }
+
+  function submitDoublesConfigActionViaGas_(action, playerId, targetPlayerId) {
+    google.script.run
+      .withSuccessHandler(function (vm) {
+        clearCurrentDoublesPendingUiAction_(playerId);
+        renderDoublesConfig(vm);
+      })
+      .withFailureHandler(function (error) {
+        clearCurrentDoublesPendingUiAction_(playerId);
+        renderDoublesConfigError(error);
+      })
+      .applyDoublesConfigActionFromUi({
+        action: action,
+        playerId: playerId,
+        targetPlayerId: targetPlayerId,
+      });
   }
 
   function submitDoublesConfigActionWithTarget(action, explicitTargetPlayerId) {
@@ -2295,16 +3005,29 @@
     } else if (action === 'reject_partner') {
       doublesLoadingTitle = 'Rechazando solicitud...';
       doublesLoadingDetail = 'Estamos registrando tu respuesta y actualizando el estado del check-in.';
+    } else if (action === 'opt_into_pool') {
+      doublesLoadingTitle = 'Entrando al pool...';
+      doublesLoadingDetail = 'Estamos reflejando tu ingreso al pool en el check-in de dobles.';
+    } else if (action === 'decline_doubles') {
+      doublesLoadingTitle = 'Registrando tu decision...';
+      doublesLoadingDetail = 'Estamos reflejando que no competirás en dobles por ahora.';
+    } else if (action === 'back_to_eligible') {
+      doublesLoadingTitle = 'Volviendo a disponible...';
+      doublesLoadingDetail = 'Estamos devolviendo tu check-in al estado disponible.';
     } else {
       doublesLoadingTitle = 'Actualizando check-in...';
       doublesLoadingDetail = 'Estamos aplicando tu accion y refrescando el estado del jugador seleccionado.';
     }
 
     doublesIsLoading = true;
-    currentDoublesVm = null;
+    if (action === 'opt_into_pool' || action === 'decline_doubles' || action === 'back_to_eligible') {
+      setCurrentDoublesPendingUiAction_(action, playerId, doublesLoadingTitle, doublesLoadingDetail);
+    } else {
+      clearCurrentDoublesPendingUiAction_(playerId);
+    }
     renderMyDayDoublesEntryCard();
     const root = document.getElementById('doubles-config-content');
-    if (root) {
+    if (root && !currentDoublesVm) {
       root.innerHTML = buildDoublesLoadingHtml({
         silent: true,
         title: doublesLoadingTitle,
@@ -2312,16 +3035,27 @@
       });
     }
 
-    google.script.run
-      .withSuccessHandler(function (vm) {
-        renderDoublesConfig(vm);
-      })
-      .withFailureHandler(renderDoublesConfigError)
-      .applyDoublesConfigActionFromUi({
-        action: action,
-        playerId: playerId,
-        targetPlayerId: targetPlayerId,
-      });
+    if (action === 'propose_partner') {
+      submitDoublesProposal_(buildDoublesProposalPayload_(playerId, targetPlayerId), playerId, targetPlayerId);
+      return;
+    }
+
+    if (action === 'confirm_partner') {
+      confirmDoublesProposal_(playerId);
+      return;
+    }
+
+    if (action === 'reject_partner') {
+      rejectDoublesProposal_(playerId);
+      return;
+    }
+
+    if (action === 'opt_into_pool' || action === 'decline_doubles' || action === 'back_to_eligible') {
+      submitDoublesCheckinState_(action, playerId);
+      return;
+    }
+
+    submitDoublesConfigActionViaGas_(action, playerId, targetPlayerId);
   }
 
   function renderDoublesActionCard(title, detail, actionName, tone) {
@@ -3249,6 +3983,7 @@
   function loadMyDayFromSelect(isAutoLoad) {
     const select = document.getElementById('my-player-select');
     const playerId = select.value;
+    const previousPlayerId = String(getSavedPlayerId() || '').trim();
 
     if (!playerId) {
       savePlayerId('');
@@ -3271,6 +4006,13 @@
 
     savePlayerId(playerId);
     savePlayerSelectionLabel_(readSelectedPlayerLabel_(select, playerId));
+    if (previousPlayerId !== String(playerId || '').trim()) {
+      clearCurrentDoublesPendingUiAction_();
+      currentDoublesBaseVm = null;
+      currentDoublesVm = null;
+      doublesIsLoading = true;
+      renderMyDayDoublesEntryCard();
+    }
     subscribeRealtimeViewModels(playerId);
     startMyDayRealtimeBootstrap_(playerId, !!isAutoLoad);
     loadDoublesConfig({ silent: true });

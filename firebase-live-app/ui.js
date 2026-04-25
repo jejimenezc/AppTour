@@ -287,7 +287,7 @@ function applyDoublesConfigActionFromUi(payload) {
       throw new Error('Debes elegir jugador y partner.');
     }
     proposePartner(playerId, targetPlayerId);
-    return publishRealtimeSnapshotAfterMutation_(getDoublesConfigViewModel(playerId), [playerId, targetPlayerId]);
+    return publishRealtimeAfterDoublesMutation_(getDoublesConfigViewModel(playerId));
   }
 
   if (!playerId) {
@@ -296,31 +296,27 @@ function applyDoublesConfigActionFromUi(payload) {
 
   if (action === 'opt_into_pool') {
     optIntoPool(playerId);
-    return publishRealtimeSnapshotAfterMutation_(getDoublesConfigViewModel(playerId), [playerId]);
+    return publishRealtimeAfterDoublesMutation_(getDoublesConfigViewModel(playerId));
   }
 
   if (action === 'decline_doubles') {
     declineDoubles(playerId);
-    return publishRealtimeSnapshotAfterMutation_(getDoublesConfigViewModel(playerId), [playerId]);
+    return publishRealtimeAfterDoublesMutation_(getDoublesConfigViewModel(playerId));
   }
 
   if (action === 'confirm_partner') {
-    const actor = getPlayerById(playerId);
-    const partnerId = String(actor && actor.doubles_request_from || actor && actor.doubles_partner_id || '').trim();
     confirmPartner(playerId);
-    return publishRealtimeSnapshotAfterMutation_(getDoublesConfigViewModel(playerId), [playerId, partnerId]);
+    return publishRealtimeAfterDoublesMutation_(getDoublesConfigViewModel(playerId));
   }
 
   if (action === 'reject_partner') {
-    const actor = getPlayerById(playerId);
-    const partnerId = String(actor && actor.doubles_request_from || actor && actor.doubles_request_to || '').trim();
     rejectPartner(playerId);
-    return publishRealtimeSnapshotAfterMutation_(getDoublesConfigViewModel(playerId), [playerId, partnerId]);
+    return publishRealtimeAfterDoublesMutation_(getDoublesConfigViewModel(playerId));
   }
 
   if (action === 'back_to_eligible') {
     clearPlayerDoublesConfig(playerId, 'eligible');
-    return publishRealtimeSnapshotAfterMutation_(getDoublesConfigViewModel(playerId), [playerId]);
+    return publishRealtimeAfterDoublesMutation_(getDoublesConfigViewModel(playerId));
   }
 
   throw new Error(`Accion de dobles no soportada: ${action}`);
@@ -1069,6 +1065,24 @@ function publishStructuralRealtimeAfterMutation_(result) {
   publishPlayerSelectorOptionsToFirebase();
   publishAllMyDayViewModelsToFirebase();
   return result;
+}
+
+function publishRealtimeAfterDoublesMutation_(result) {
+  publishRealtimeSnapshotToFirebase();
+  publishPlayerSelectorOptionsToFirebase();
+  publishAllDoublesViewModelsToFirebase();
+  return result;
+}
+
+function processPendingDoublesConfigIntents_() {
+  const cleanupResult = cleanupExpiredDoublesProposalIntents_();
+  return {
+    processedCount: Number(cleanupResult && cleanupResult.removedCount || 0),
+    impactedPlayerIds: Array.isArray(cleanupResult && cleanupResult.impactedPlayerIds)
+      ? cleanupResult.impactedPlayerIds
+      : [],
+    results: [],
+  };
 }
 
 function processPendingMatchSubmissions_() {

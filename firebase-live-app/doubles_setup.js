@@ -146,6 +146,7 @@ function generateDoublesTeamsAtCut() {
     throw new Error(`No se puede generar dobles:\n- ${validation.errors.join('\n- ')}`);
   }
 
+  consolidateDoublesFirebaseStateAtCut_();
   clearDoublesTeams();
 
   const confirmedTeams = buildConfirmedDoublesTeams();
