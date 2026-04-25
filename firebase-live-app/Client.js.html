@@ -36,6 +36,8 @@
   let currentSinglesGroupsVm = null;
   let currentDoublesBaseVm = null;
   let currentDoublesVm = null;
+  let currentResultsVm = null;
+  let currentRankingVm = null;
   let currentAdminVm = null;
   let adminActionInFlight = false;
   let myDayRefreshTimer = null;
@@ -64,6 +66,8 @@
   let realtimeDoublesIntentsRef = null;
   let realtimeDoublesConfirmedRef = null;
   let realtimeDoublesCheckinRef = null;
+  let realtimeResultsHistoryRef = null;
+  let realtimeRankingRef = null;
   let realtimeSelectorOptionsRef = null;
   let submissionStatusRef = null;
   let activeSubmissionId = '';
@@ -204,6 +208,20 @@
         loadDoublesConfig({ silent: true, forceServer: true });
       }
       refreshCurrentPlayerExperience({ silent: true });
+    }
+    if (nextScreen === 'results') {
+      if (currentResultsVm) {
+        renderResultsHistory(currentResultsVm);
+      } else {
+        loadResultsHistory();
+      }
+    }
+    if (nextScreen === 'ranking') {
+      if (currentRankingVm) {
+        renderRankingLeaderboard(currentRankingVm);
+      } else {
+        loadRankingLeaderboard();
+      }
     }
     handleControlHeartbeatScreenChange_();
     window.scrollTo({ top: 0, behavior: 'auto' });
@@ -679,6 +697,7 @@
       db = firebase.database();
       subscribeRealtimeMatches();
       subscribeRealtimeDoublesIntents_();
+      subscribeRealtimeInformationalViews_();
     } catch (error) {
       console.error('No fue posible inicializar Firebase Realtime Database.', error);
       setRefreshIndicator('Error de conexion realtime');
@@ -873,6 +892,208 @@
     }, function (error) {
       console.error('Error al escuchar check-in de dobles en Firebase.', error);
     });
+  }
+
+  function subscribeRealtimeInformationalViews_() {
+    if (!db) return;
+
+    if (!realtimeResultsHistoryRef) {
+      realtimeResultsHistoryRef = db.ref('views/resultsHistory');
+      realtimeResultsHistoryRef.on('value', function (snapshot) {
+        const vm = snapshot ? snapshot.val() : null;
+        if (!vm) return;
+        currentResultsVm = vm;
+        if (isResultsScreenActive_()) {
+          renderResultsHistory(vm);
+        }
+      }, function (error) {
+        console.error('Error al escuchar resultados historicos en Firebase.', error);
+      });
+    }
+
+    if (!realtimeRankingRef) {
+      realtimeRankingRef = db.ref('views/rankingLeaderboard');
+      realtimeRankingRef.on('value', function (snapshot) {
+        const vm = snapshot ? snapshot.val() : null;
+        if (!vm) return;
+        currentRankingVm = vm;
+        if (isRankingScreenActive_()) {
+          renderRankingLeaderboard(vm);
+        }
+      }, function (error) {
+        console.error('Error al escuchar ranking en Firebase.', error);
+      });
+    }
+  }
+
+  function isResultsScreenActive_() {
+    const panel = document.querySelector('[data-screen-panel="results"]');
+    return !!(panel && panel.classList.contains('is-active') && !panel.hidden);
+  }
+
+  function isRankingScreenActive_() {
+    const panel = document.querySelector('[data-screen-panel="ranking"]');
+    return !!(panel && panel.classList.contains('is-active') && !panel.hidden);
+  }
+
+  function loadResultsHistory() {
+    const root = document.getElementById('results-history-content');
+    if (!root) return;
+    if (!currentResultsVm) {
+      root.innerHTML = '<div class="loading">Cargando resultados...</div>';
+    }
+
+    google.script.run
+      .withSuccessHandler(function (vm) {
+        currentResultsVm = vm;
+        renderResultsHistory(vm);
+      })
+      .withFailureHandler(function (error) {
+        renderResultsHistoryError(error);
+      })
+      .getResultsHistoryViewModelFromUi();
+  }
+
+  function renderResultsHistory(vm) {
+    currentResultsVm = vm && typeof vm === 'object' ? Object.assign({}, vm) : vm;
+    const root = document.getElementById('results-history-content');
+    if (!root) return;
+
+    const safeVm = currentResultsVm || {};
+    const items = Array.isArray(safeVm.items) ? safeVm.items : [];
+    const cardsHtml = items.length ? items.map(function (item) {
+      return `
+        <article class="card-soft" style="margin-bottom: 10px;">
+          <div class="row-between" style="gap: 10px; align-items: flex-start; flex-wrap: wrap;">
+            <div>
+              <div class="stat-label">${escapeHtml(item.phaseLabel || 'Partido')}</div>
+              <div class="stat-value" style="font-size: 18px; margin-top: 8px;">${escapeHtml(item.matchupLabel || '')}</div>
+              <div class="helper" style="margin-top: 6px;">${escapeHtml(item.resultLabel ? `Resultado ${item.resultLabel}` : '')}</div>
+              <div class="helper" style="margin-top: 6px;">${escapeHtml(item.winnerLabel ? `Ganador: ${item.winnerLabel}` : '')}</div>
+            </div>
+            <div style="text-align: right;">
+              ${item.submittedAt ? `<div class="helper">${escapeHtml(item.submittedAt)}</div>` : ''}
+              ${item.tableLabel ? `<div class="helper" style="margin-top: 6px;">${escapeHtml(item.tableLabel)}</div>` : ''}
+              ${item.blockLabel ? `<div class="helper" style="margin-top: 6px;">${escapeHtml(item.blockLabel)}</div>` : ''}
+            </div>
+          </div>
+        </article>
+      `;
+    }).join('') : '<div class="card-soft"><div class="empty">Aun no hay resultados historicos para mostrar.</div></div>';
+
+    root.innerHTML = `
+      <div class="stack">
+        <div class="grid-stats">
+          <div class="stat">
+            <div class="stat-label">Totales</div>
+            <div class="stat-value">${escapeHtml(safeVm.summary && safeVm.summary.total || 0)}</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Grupos</div>
+            <div class="stat-value">${escapeHtml(safeVm.summary && safeVm.summary.groups || 0)}</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Dobles</div>
+            <div class="stat-value">${escapeHtml(safeVm.summary && safeVm.summary.doubles || 0)}</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Singles</div>
+            <div class="stat-value">${escapeHtml(safeVm.summary && safeVm.summary.singles || 0)}</div>
+          </div>
+        </div>
+
+        <div class="card-soft">
+          <div class="helper">${escapeHtml(safeVm.statusNote || '')}</div>
+        </div>
+
+        <div>${cardsHtml}</div>
+      </div>
+    `;
+  }
+
+  function renderResultsHistoryError(error) {
+    const root = document.getElementById('results-history-content');
+    if (!root) return;
+    const message = error && error.message ? error.message : String(error || 'Error desconocido');
+    root.innerHTML = `<div class="error">No se pudieron cargar los resultados: ${escapeHtml(message)}</div>`;
+  }
+
+  function loadRankingLeaderboard() {
+    const root = document.getElementById('ranking-leaderboard-content');
+    if (!root) return;
+    if (!currentRankingVm) {
+      root.innerHTML = '<div class="loading">Cargando ranking...</div>';
+    }
+
+    google.script.run
+      .withSuccessHandler(function (vm) {
+        currentRankingVm = vm;
+        renderRankingLeaderboard(vm);
+      })
+      .withFailureHandler(function (error) {
+        renderRankingLeaderboardError(error);
+      })
+      .getRankingLeaderboardViewModelFromUi();
+  }
+
+  function renderRankingLeaderboard(vm) {
+    currentRankingVm = vm && typeof vm === 'object' ? Object.assign({}, vm) : vm;
+    const root = document.getElementById('ranking-leaderboard-content');
+    if (!root) return;
+
+    const safeVm = currentRankingVm || {};
+    const rows = Array.isArray(safeVm.rows) ? safeVm.rows : [];
+    const cardsHtml = rows.length ? rows.map(function (row) {
+      const breakdown = Array.isArray(row.breakdown) && row.breakdown.length
+        ? row.breakdown.map(function (item) {
+            return `<div class="helper" style="margin-top: 4px;">${escapeHtml(`${item.phaseLabel}: ${item.stageLabel} (+${item.points})`)}</div>`;
+          }).join('')
+        : '<div class="helper" style="margin-top: 4px;">Sin puntos asegurados aun.</div>';
+
+      return `
+        <article class="card-soft" style="margin-bottom: 10px;">
+          <div class="row-between" style="gap: 10px; align-items: flex-start;">
+            <div>
+              <div class="stat-label">Posicion ${escapeHtml(row.position || '-')}</div>
+              <div class="stat-value" style="font-size: 18px; margin-top: 8px;">${escapeHtml(row.playerName || row.playerId || '')}</div>
+              ${breakdown}
+            </div>
+            <div style="text-align: right;">
+              <div class="stat-label">Puntos</div>
+              <div class="stat-value">${escapeHtml(row.totalPoints || 0)}</div>
+            </div>
+          </div>
+        </article>
+      `;
+    }).join('') : '<div class="card-soft"><div class="empty">Aun no hay puntajes para mostrar.</div></div>';
+
+    root.innerHTML = `
+      <div class="stack">
+        <div class="grid-stats">
+          <div class="stat">
+            <div class="stat-label">Jugadores</div>
+            <div class="stat-value">${escapeHtml(safeVm.summary && safeVm.summary.players || 0)}</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Con puntaje</div>
+            <div class="stat-value">${escapeHtml(safeVm.summary && safeVm.summary.scoredPlayers || 0)}</div>
+          </div>
+        </div>
+
+        <div class="card-soft">
+          <div class="helper">${escapeHtml(safeVm.rulesNote || '')}</div>
+        </div>
+
+        <div>${cardsHtml}</div>
+      </div>
+    `;
+  }
+
+  function renderRankingLeaderboardError(error) {
+    const root = document.getElementById('ranking-leaderboard-content');
+    if (!root) return;
+    const message = error && error.message ? error.message : String(error || 'Error desconocido');
+    root.innerHTML = `<div class="error">No se pudo cargar el ranking: ${escapeHtml(message)}</div>`;
   }
 
   function getDoublesRealtimeReferenceNowMs_() {

@@ -17,6 +17,12 @@
         <button class="app-tab" type="button" data-screen-tab="myday" aria-selected="false" onclick="setActiveAppScreen('myday')">
           Mi jornada
         </button>
+        <button class="app-tab" type="button" data-screen-tab="results" aria-selected="false" onclick="setActiveAppScreen('results')">
+          Resultados
+        </button>
+        <button class="app-tab" type="button" data-screen-tab="ranking" aria-selected="false" onclick="setActiveAppScreen('ranking')">
+          Ranking
+        </button>
         <button class="app-tab" type="button" data-screen-tab="admin" aria-selected="false" onclick="setActiveAppScreen('admin')">
           Control
         </button>
@@ -127,6 +133,46 @@
 
         <div id="doubles-config-content">
           <div class="loading">Cargando configuracion de dobles...</div>
+        </div>
+      </section>
+    </div>
+
+    <div class="app-screen" data-screen-panel="results">
+      <section class="card">
+        <div class="row-between" style="margin-bottom: 12px; align-items: flex-end; flex-wrap: wrap;">
+          <div>
+            <p class="subtitle">Solo lectura</p>
+            <h2 class="section-title" style="margin: 0;">Resultados historicos</h2>
+            <p class="helper" style="margin-top: 6px;">Partidos ya cerrados, ordenados por registro de resultado.</p>
+          </div>
+
+          <button class="admin-action-button admin-action-button-secondary" type="button" onclick="loadResultsHistory()">
+            Actualizar
+          </button>
+        </div>
+
+        <div id="results-history-content">
+          <div class="loading">Cargando resultados...</div>
+        </div>
+      </section>
+    </div>
+
+    <div class="app-screen" data-screen-panel="ranking">
+      <section class="card">
+        <div class="row-between" style="margin-bottom: 12px; align-items: flex-end; flex-wrap: wrap;">
+          <div>
+            <p class="subtitle">Solo lectura</p>
+            <h2 class="section-title" style="margin: 0;">Puntajes y ranking</h2>
+            <p class="helper" style="margin-top: 6px;">Vista acumulada de puntos asegurados por etapa cerrada en el torneo actual.</p>
+          </div>
+
+          <button class="admin-action-button admin-action-button-secondary" type="button" onclick="loadRankingLeaderboard()">
+            Actualizar
+          </button>
+        </div>
+
+        <div id="ranking-leaderboard-content">
+          <div class="loading">Cargando ranking...</div>
         </div>
       </section>
     </div>
