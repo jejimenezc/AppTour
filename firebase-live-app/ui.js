@@ -816,6 +816,9 @@ function initializeTournamentFlowV2FromUi() {
   initializeTournamentFlowV2();
   const vm = getAdminControlViewModel();
   vm.lastActionMessage = 'Reset V2 aplicado. Base limpia, ventana de dobles abierta y cronometro pausado en 00:00:00.';
+  // Reset V2 reabre la ventana de dobles; republish inmediato evita que la UI
+  // siga montada sobre view models previos mientras Firebase ya limpio check-in/intents.
+  publishAllDoublesViewModelsToFirebase();
   return publishStructuralRealtimeAfterMutation_(vm);
 }
 
