@@ -238,6 +238,17 @@ function getDoublesConfigViewModel(selectedPlayerId) {
   const tournamentPlayerLookup = getTournamentPlayerIdLookup();
   const actorId = String(selectedPlayerId || '').trim();
   const actor = actorId ? getPlayerById(actorId) : null;
+  const activeProposals = getActiveDoublesProposalIntents_();
+  const confirmedSnapshot = getDoublesConfirmedPairsSnapshot_();
+  const checkinMap = getDoublesCheckinStateMap_();
+  const proposalContext = buildDoublesProposalContext_(activeProposals);
+  const doublesVmContext = {
+    confirmedPartnerMap: confirmedSnapshot.partnerMap || {},
+    proposalPlayerIds: proposalContext.proposalPlayerIds,
+    proposalIncomingByPlayer: proposalContext.incomingByPlayer,
+    proposalOutgoingByPlayer: proposalContext.outgoingByPlayer,
+    checkinMap: checkinMap,
+  };
   const summary = getDoublesStatusSummary();
   const validation = validateDoublesCut();
 
@@ -256,10 +267,12 @@ function getDoublesConfigViewModel(selectedPlayerId) {
         name: resolvePlayerFullName(player.player_id),
       }))
       .sort((a, b) => a.name.localeCompare(b.name)),
-    actor: actor && tournamentPlayerLookup[String(actor.player_id)] ? buildDoublesActorViewModel_(actor) : null,
+    actor: actor && tournamentPlayerLookup[String(actor.player_id)] ? buildDoublesActorViewModel_(actor, doublesVmContext) : null,
     rows: players
       .filter(player => isPlayerAvailableForDoublesWindow(player))
-      .map(buildDoublesPlayerRowViewModel_)
+      .map(function (player) {
+        return buildDoublesPlayerRowViewModel_(player, doublesVmContext);
+      })
       .sort(compareDoublesRows_),
     statusNote: buildDoublesStatusNote_(tournamentStatus, validation),
     generatedAt: nowIso(),
@@ -287,7 +300,7 @@ function applyDoublesConfigActionFromUi(payload) {
       throw new Error('Debes elegir jugador y partner.');
     }
     proposePartner(playerId, targetPlayerId);
-    return publishRealtimeSnapshotAfterMutation_(getDoublesConfigViewModel(playerId), [playerId, targetPlayerId]);
+    return publishRealtimeAfterDoublesMutation_(getDoublesConfigViewModel(playerId));
   }
 
   if (!playerId) {
@@ -296,42 +309,65 @@ function applyDoublesConfigActionFromUi(payload) {
 
   if (action === 'opt_into_pool') {
     optIntoPool(playerId);
-    return publishRealtimeSnapshotAfterMutation_(getDoublesConfigViewModel(playerId), [playerId]);
+    return publishRealtimeAfterDoublesMutation_(getDoublesConfigViewModel(playerId));
   }
 
   if (action === 'decline_doubles') {
     declineDoubles(playerId);
-    return publishRealtimeSnapshotAfterMutation_(getDoublesConfigViewModel(playerId), [playerId]);
+    return publishRealtimeAfterDoublesMutation_(getDoublesConfigViewModel(playerId));
   }
 
   if (action === 'confirm_partner') {
-    const actor = getPlayerById(playerId);
-    const partnerId = String(actor && actor.doubles_request_from || actor && actor.doubles_partner_id || '').trim();
     confirmPartner(playerId);
-    return publishRealtimeSnapshotAfterMutation_(getDoublesConfigViewModel(playerId), [playerId, partnerId]);
+    return publishRealtimeAfterDoublesMutation_(getDoublesConfigViewModel(playerId));
   }
 
   if (action === 'reject_partner') {
-    const actor = getPlayerById(playerId);
-    const partnerId = String(actor && actor.doubles_request_from || actor && actor.doubles_request_to || '').trim();
     rejectPartner(playerId);
-    return publishRealtimeSnapshotAfterMutation_(getDoublesConfigViewModel(playerId), [playerId, partnerId]);
+    return publishRealtimeAfterDoublesMutation_(getDoublesConfigViewModel(playerId));
   }
 
   if (action === 'back_to_eligible') {
     clearPlayerDoublesConfig(playerId, 'eligible');
-    return publishRealtimeSnapshotAfterMutation_(getDoublesConfigViewModel(playerId), [playerId]);
+    return publishRealtimeAfterDoublesMutation_(getDoublesConfigViewModel(playerId));
   }
 
   throw new Error(`Accion de dobles no soportada: ${action}`);
 }
 
-function buildDoublesActorViewModel_(player) {
+function buildDoublesProposalContext_(activeProposals) {
+  const proposalPlayerIds = {};
+  const incomingByPlayer = {};
+  const outgoingByPlayer = {};
+
+  (activeProposals || []).forEach(function (intent) {
+    const fromPlayerId = String(intent && intent.fromPlayerId || '').trim();
+    const toPlayerId = String(intent && intent.toPlayerId || '').trim();
+    if (!fromPlayerId || !toPlayerId) return;
+
+    proposalPlayerIds[fromPlayerId] = true;
+    proposalPlayerIds[toPlayerId] = true;
+
+    if (!outgoingByPlayer[fromPlayerId]) outgoingByPlayer[fromPlayerId] = toPlayerId;
+    if (!incomingByPlayer[toPlayerId]) incomingByPlayer[toPlayerId] = fromPlayerId;
+  });
+
+  return {
+    proposalPlayerIds: proposalPlayerIds,
+    incomingByPlayer: incomingByPlayer,
+    outgoingByPlayer: outgoingByPlayer,
+  };
+}
+
+function buildDoublesActorViewModel_(player, context) {
   const playerId = String(player.player_id || '').trim();
-  const status = String(player.doubles_status || '').trim();
-  const partnerId = String(player.doubles_partner_id || '').trim();
-  const requestTo = String(player.doubles_request_to || '').trim();
-  const requestFrom = String(player.doubles_request_from || '').trim();
+  const status = getEffectiveDoublesStatusForPlayer_(player, context);
+  const confirmedPartnerMap = context && context.confirmedPartnerMap || {};
+  const requestToMap = context && context.proposalOutgoingByPlayer || {};
+  const requestFromMap = context && context.proposalIncomingByPlayer || {};
+  const partnerId = String(confirmedPartnerMap[playerId] || player.doubles_partner_id || '').trim();
+  const requestTo = String(requestToMap[playerId] || player.doubles_request_to || '').trim();
+  const requestFrom = String(requestFromMap[playerId] || player.doubles_request_from || '').trim();
 
   return {
     id: playerId,
@@ -470,12 +506,15 @@ function buildSinglesGroupsStatusNote_(tournamentStatus, checkedInPlayers, propo
   return 'Checkpoint listo. Puedes revisar cambios finos y confirmar los grupos para iniciar la fase.';
 }
 
-function buildDoublesPlayerRowViewModel_(player) {
+function buildDoublesPlayerRowViewModel_(player, context) {
   const playerId = String(player.player_id || '').trim();
-  const status = String(player.doubles_status || '').trim();
-  const partnerId = String(player.doubles_partner_id || '').trim();
-  const requestTo = String(player.doubles_request_to || '').trim();
-  const requestFrom = String(player.doubles_request_from || '').trim();
+  const status = getEffectiveDoublesStatusForPlayer_(player, context);
+  const confirmedPartnerMap = context && context.confirmedPartnerMap || {};
+  const requestToMap = context && context.proposalOutgoingByPlayer || {};
+  const requestFromMap = context && context.proposalIncomingByPlayer || {};
+  const partnerId = String(confirmedPartnerMap[playerId] || player.doubles_partner_id || '').trim();
+  const requestTo = String(requestToMap[playerId] || player.doubles_request_to || '').trim();
+  const requestFrom = String(requestFromMap[playerId] || player.doubles_request_from || '').trim();
 
   let detail = 'Sin partner aun';
   if (status === 'pool') detail = 'Asignacion automatica';
@@ -820,6 +859,9 @@ function initializeTournamentFlowV2FromUi() {
   initializeTournamentFlowV2();
   const vm = getAdminControlViewModel();
   vm.lastActionMessage = 'Reset V2 aplicado. Base limpia, ventana de dobles abierta y cronometro pausado en 00:00:00.';
+  // Reset V2 reabre la ventana de dobles; republish inmediato evita que la UI
+  // siga montada sobre view models previos mientras Firebase ya limpio check-in/intents.
+  publishAllDoublesViewModelsToFirebase();
   return publishStructuralRealtimeAfterMutation_(vm);
 }
 
@@ -1069,6 +1111,24 @@ function publishStructuralRealtimeAfterMutation_(result) {
   publishPlayerSelectorOptionsToFirebase();
   publishAllMyDayViewModelsToFirebase();
   return result;
+}
+
+function publishRealtimeAfterDoublesMutation_(result) {
+  publishRealtimeSnapshotToFirebase();
+  publishPlayerSelectorOptionsToFirebase();
+  publishAllDoublesViewModelsToFirebase();
+  return result;
+}
+
+function processPendingDoublesConfigIntents_() {
+  const cleanupResult = cleanupExpiredDoublesProposalIntents_();
+  return {
+    processedCount: Number(cleanupResult && cleanupResult.removedCount || 0),
+    impactedPlayerIds: Array.isArray(cleanupResult && cleanupResult.impactedPlayerIds)
+      ? cleanupResult.impactedPlayerIds
+      : [],
+    results: [],
+  };
 }
 
 function processPendingMatchSubmissions_() {

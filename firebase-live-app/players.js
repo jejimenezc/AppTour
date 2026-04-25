@@ -202,6 +202,10 @@ function openDoublesConfirmationWindow() {
   });
 
   replacePlayers(players);
+  deleteFirebaseNode_('doubles/intents/proposals');
+  deleteFirebaseNode_('doubles/intents/confirmedByPlayer');
+  deleteFirebaseNode_('doubles/intents/confirmedPairs');
+  deleteFirebaseNode_('doubles/checkin/byPlayer');
   setConfigValue('tournament_status', 'awaiting_doubles_confirmation', 'Ventana de configuración de dobles abierta');
 }
 
