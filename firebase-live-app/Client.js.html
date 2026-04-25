@@ -38,6 +38,8 @@
   let currentDoublesVm = null;
   let currentResultsVm = null;
   let currentRankingVm = null;
+  let resultsHistoryLoadInFlight = false;
+  let rankingLeaderboardLoadInFlight = false;
   let currentAdminVm = null;
   let adminActionInFlight = false;
   let myDayRefreshTimer = null;
@@ -936,19 +938,42 @@
     return !!(panel && panel.classList.contains('is-active') && !panel.hidden);
   }
 
+  function setInlineRefreshButtonState_(buttonId, isLoading, idleLabel) {
+    const button = document.getElementById(buttonId);
+    if (!button) return;
+
+    button.disabled = !!isLoading;
+    if (!isLoading) {
+      button.textContent = idleLabel;
+      return;
+    }
+
+    button.innerHTML = `
+      <span class="doubles-loading-spinner" aria-hidden="true" style="width: 14px; height: 14px; border-width: 2px; margin-right: 8px; display: inline-block; vertical-align: middle;"></span>
+      <span style="vertical-align: middle;">Actualizando...</span>
+    `;
+  }
+
   function loadResultsHistory() {
     const root = document.getElementById('results-history-content');
     if (!root) return;
+    if (resultsHistoryLoadInFlight) return;
+    resultsHistoryLoadInFlight = true;
+    setInlineRefreshButtonState_('results-history-refresh-button', true, 'Actualizar');
     if (!currentResultsVm) {
       root.innerHTML = '<div class="loading">Cargando resultados...</div>';
     }
 
     google.script.run
       .withSuccessHandler(function (vm) {
+        resultsHistoryLoadInFlight = false;
+        setInlineRefreshButtonState_('results-history-refresh-button', false, 'Actualizar');
         currentResultsVm = vm;
         renderResultsHistory(vm);
       })
       .withFailureHandler(function (error) {
+        resultsHistoryLoadInFlight = false;
+        setInlineRefreshButtonState_('results-history-refresh-button', false, 'Actualizar');
         renderResultsHistoryError(error);
       })
       .getResultsHistoryViewModelFromUi();
@@ -1021,16 +1046,23 @@
   function loadRankingLeaderboard() {
     const root = document.getElementById('ranking-leaderboard-content');
     if (!root) return;
+    if (rankingLeaderboardLoadInFlight) return;
+    rankingLeaderboardLoadInFlight = true;
+    setInlineRefreshButtonState_('ranking-refresh-button', true, 'Actualizar');
     if (!currentRankingVm) {
       root.innerHTML = '<div class="loading">Cargando ranking...</div>';
     }
 
     google.script.run
       .withSuccessHandler(function (vm) {
+        rankingLeaderboardLoadInFlight = false;
+        setInlineRefreshButtonState_('ranking-refresh-button', false, 'Actualizar');
         currentRankingVm = vm;
         renderRankingLeaderboard(vm);
       })
       .withFailureHandler(function (error) {
+        rankingLeaderboardLoadInFlight = false;
+        setInlineRefreshButtonState_('ranking-refresh-button', false, 'Actualizar');
         renderRankingLeaderboardError(error);
       })
       .getRankingLeaderboardViewModelFromUi();
