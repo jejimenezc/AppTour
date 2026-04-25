@@ -1148,6 +1148,17 @@ function processSinglePendingMatchSubmission_(submissionId, payload) {
       actorRole: actorRole,
       updatedAt: nowIso(),
     });
+    writeFirebaseNode_(`submissions/byMatch/${matchId}/${result.submissionId}`, {
+      submissionId: result.submissionId,
+      matchId: matchId,
+      mode: mode,
+      status: 'processing',
+      actorPlayerId: actorPlayerId,
+      actorRole: actorRole,
+      createdAt: result.createdAt,
+      createdAtMs: result.createdAtMs,
+      updatedAt: nowIso(),
+    });
 
     const match = getMatchById(matchId);
     if (!match) {
@@ -1214,6 +1225,7 @@ function processSinglePendingMatchSubmission_(submissionId, payload) {
       processedAt: result.processedAt,
     });
     writeFirebaseNode_(`submissions/history/${result.submissionId}`, result);
+    deleteFirebaseNode_(`submissions/byMatch/${result.matchId}/${result.submissionId}`);
     deleteFirebaseNode_(`submissions/pending/${result.submissionId}`);
   }
 

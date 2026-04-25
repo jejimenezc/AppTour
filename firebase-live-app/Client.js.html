@@ -62,6 +62,8 @@
   let realtimeSelectorOptionsRef = null;
   let submissionStatusRef = null;
   let activeSubmissionId = '';
+  let matchSubmissionStateRef = null;
+  let activeMatchSubmissionId = '';
   let realtimeListenerAttached = false;
   let realtimeMyDayPlayerId = '';
   let realtimeDoublesPlayerId = '';
@@ -706,6 +708,7 @@
   function unsubscribeRealtimeViewModels() {
     unsubscribeRealtimeMyDay();
     unsubscribeRealtimeDoubles();
+    clearCurrentMatchSubmissionStateSubscription_();
   }
 
   function subscribeRealtimeMyDay(playerId) {
@@ -1405,9 +1408,20 @@
   }
 
   function mapRealtimeMatchToMyDayMatch(baseMatch, realtimeMatch) {
-    const nextEventState = normalizeMyDayEventState_(
+    const baseEventState = normalizeMyDayEventState_(baseMatch && baseMatch.eventState);
+    const realtimeEventState = normalizeMyDayEventState_(
       realtimeMatch && realtimeMatch.eventState ? realtimeMatch.eventState : baseMatch.eventState
     );
+    const nextEventState = Object.assign({}, baseEventState, realtimeEventState, {
+      pendingSubmission: !!(baseEventState.pendingSubmission || realtimeEventState.pendingSubmission),
+      pendingSubmissionMode: realtimeEventState.pendingSubmissionMode || baseEventState.pendingSubmissionMode,
+      pendingSubmissionAt: realtimeEventState.pendingSubmissionAt || baseEventState.pendingSubmissionAt,
+      submissionStatus: realtimeEventState.submissionStatus || baseEventState.submissionStatus,
+      submissionMode: realtimeEventState.submissionMode || baseEventState.submissionMode,
+      submissionSubmissionId: realtimeEventState.submissionSubmissionId || baseEventState.submissionSubmissionId,
+      submissionActorRole: realtimeEventState.submissionActorRole || baseEventState.submissionActorRole,
+      submissionAt: realtimeEventState.submissionAt || baseEventState.submissionAt,
+    });
 
     return {
       tableNo: realtimeMatch && realtimeMatch.tableNo != null ? realtimeMatch.tableNo : baseMatch.tableNo,
@@ -1432,6 +1446,11 @@
       pendingSubmission: !!source.pendingSubmission,
       pendingSubmissionMode: String(source.pendingSubmissionMode || '').trim(),
       pendingSubmissionAt: String(source.pendingSubmissionAt || '').trim(),
+      submissionStatus: String(source.submissionStatus || '').trim(),
+      submissionMode: String(source.submissionMode || '').trim(),
+      submissionSubmissionId: String(source.submissionSubmissionId || '').trim(),
+      submissionActorRole: String(source.submissionActorRole || '').trim(),
+      submissionAt: String(source.submissionAt || '').trim(),
       resultMode: String(source.resultMode || '').trim(),
       closingState: String(source.closingState || '').trim(),
     };
@@ -3157,6 +3176,7 @@
     if (!playerId) {
       savePlayerId('');
       unsubscribeRealtimeViewModels();
+      clearCurrentMatchSubmissionStateSubscription_();
       currentMyDayVm = null;
       currentDoublesVm = null;
       myDayClockSnapshot = null;
@@ -3258,6 +3278,7 @@
       delete safeVm.timeState;
     }
     currentMyDayVm = safeVm;
+    ensureCurrentMatchSubmissionStateSubscription_();
     myDayClockSnapshot = {
       lastPhaseKey: '',
     };
@@ -3927,8 +3948,22 @@
     setCaptureSubmittingState(true, triggerEl, payload);
 
     if (db && typeof db.ref === 'function') {
-      db.ref('submissions/pending/' + submission.submissionId)
-        .set(submission)
+      const submissionWrites = {};
+      submissionWrites['submissions/pending/' + submission.submissionId] = submission;
+      submissionWrites['submissions/byMatch/' + submission.matchId + '/' + submission.submissionId] = {
+        submissionId: submission.submissionId,
+        matchId: submission.matchId,
+        mode: submission.mode,
+        status: 'queued',
+        actorPlayerId: submission.actorPlayerId,
+        actorRole: submission.actorRole,
+        createdAt: submission.createdAt,
+        createdAtMs: submission.createdAtMs,
+        updatedAt: submission.createdAt,
+      };
+
+      db.ref()
+        .update(submissionWrites)
         .then(function () {
           markMyDayMatchSubmissionQueued_(submission);
           subscribeSubmissionStatus_(submission);
@@ -4110,6 +4145,96 @@
     activeSubmissionId = '';
   }
 
+  function clearCurrentMatchSubmissionStateSubscription_() {
+    if (matchSubmissionStateRef && typeof matchSubmissionStateRef.off === 'function') {
+      matchSubmissionStateRef.off('value');
+    }
+    matchSubmissionStateRef = null;
+    activeMatchSubmissionId = '';
+  }
+
+  function ensureCurrentMatchSubmissionStateSubscription_() {
+    const matchId = String(currentMyDayVm && currentMyDayVm.currentMatch && (currentMyDayVm.currentMatch.matchId || currentMyDayVm.currentMatch.id) || '').trim();
+
+    if (!db || typeof db.ref !== 'function' || !matchId) {
+      clearCurrentMatchSubmissionStateSubscription_();
+      applyCurrentMatchSubmissionState_(null);
+      return;
+    }
+
+    if (matchSubmissionStateRef && activeMatchSubmissionId === matchId) {
+      return;
+    }
+
+    clearCurrentMatchSubmissionStateSubscription_();
+    activeMatchSubmissionId = matchId;
+    matchSubmissionStateRef = db.ref('submissions/byMatch/' + matchId);
+    matchSubmissionStateRef.on('value', function (snapshot) {
+      const value = snapshot && typeof snapshot.val === 'function' ? snapshot.val() : null;
+      applyCurrentMatchSubmissionState_(value);
+    }, function () {});
+  }
+
+  function selectCurrentMatchSubmissionState_(rawValue) {
+    if (!rawValue || typeof rawValue !== 'object') return null;
+
+    const entries = Object.keys(rawValue).map(function (submissionId) {
+      const value = rawValue[submissionId] && typeof rawValue[submissionId] === 'object' ? rawValue[submissionId] : {};
+      return {
+        submissionId: String(value.submissionId || submissionId || '').trim(),
+        mode: String(value.mode || '').trim(),
+        status: String(value.status || '').trim(),
+        actorRole: String(value.actorRole || '').trim(),
+        createdAt: String(value.createdAt || '').trim(),
+        createdAtMs: Number(value.createdAtMs || 0),
+      };
+    }).filter(function (entry) {
+      return entry.status === 'queued' || entry.status === 'processing';
+    });
+
+    if (!entries.length) return null;
+
+    entries.sort(function (left, right) {
+      const leftRank = left.status === 'processing' ? 1 : 0;
+      const rightRank = right.status === 'processing' ? 1 : 0;
+      if (leftRank !== rightRank) return rightRank - leftRank;
+      if (left.createdAtMs !== right.createdAtMs) return right.createdAtMs - left.createdAtMs;
+      return String(right.submissionId || '').localeCompare(String(left.submissionId || ''));
+    });
+
+    return entries[0];
+  }
+
+  function applyCurrentMatchSubmissionState_(rawValue) {
+    if (!currentMyDayVm || !currentMyDayVm.currentMatch) return;
+
+    const nextSubmissionState = selectCurrentMatchSubmissionState_(rawValue);
+    const currentEventState = normalizeMyDayEventState_(currentMyDayVm.currentMatch.eventState);
+    const nextEventState = Object.assign({}, currentEventState, {
+      submissionStatus: nextSubmissionState ? nextSubmissionState.status : '',
+      submissionMode: nextSubmissionState ? nextSubmissionState.mode : '',
+      submissionSubmissionId: nextSubmissionState ? nextSubmissionState.submissionId : '',
+      submissionActorRole: nextSubmissionState ? nextSubmissionState.actorRole : '',
+      submissionAt: nextSubmissionState ? nextSubmissionState.createdAt : '',
+    });
+
+    const stateChanged = currentEventState.submissionStatus !== nextEventState.submissionStatus ||
+      currentEventState.submissionMode !== nextEventState.submissionMode ||
+      currentEventState.submissionSubmissionId !== nextEventState.submissionSubmissionId ||
+      currentEventState.submissionActorRole !== nextEventState.submissionActorRole ||
+      currentEventState.submissionAt !== nextEventState.submissionAt;
+
+    if (!stateChanged) return;
+
+    currentMyDayVm = Object.assign({}, currentMyDayVm, {
+      currentMatch: Object.assign({}, currentMyDayVm.currentMatch, {
+        eventState: nextEventState,
+      }),
+    });
+
+    updateMyDayCurrentMatchCard_(buildMyDayVmForClientTime_(currentMyDayVm));
+  }
+
   function subscribeSubmissionStatus_(submission) {
     if (!submission || !db || typeof db.ref !== 'function') return;
     clearSubmissionStatusSubscription_();
@@ -4147,6 +4272,11 @@
       pendingSubmission: false,
       pendingSubmissionMode: '',
       pendingSubmissionAt: '',
+      submissionStatus: '',
+      submissionMode: '',
+      submissionSubmissionId: '',
+      submissionActorRole: '',
+      submissionAt: '',
       resultMode: submission.mode === 'final' ? 'final' : 'closing_state',
       closingState: submission.mode === 'final' ? '' : String(submission.closingState || '').trim(),
       resultSubmitted: submission.mode === 'final',
@@ -4170,6 +4300,11 @@
         pendingSubmission: false,
         pendingSubmissionMode: '',
         pendingSubmissionAt: '',
+        submissionStatus: '',
+        submissionMode: '',
+        submissionSubmissionId: '',
+        submissionActorRole: '',
+        submissionAt: '',
       });
       currentMyDayVm = Object.assign({}, currentMyDayVm, {
         currentMatch: Object.assign({}, currentMyDayVm.currentMatch, { eventState: nextEventState }),
@@ -4267,6 +4402,14 @@
         label: 'Procesando envio...',
         disabled: true,
         helperText: 'El envio ya esta en cola y esperando aplicacion del motor.',
+      };
+    }
+
+    if (eventState.submissionStatus === 'queued' || eventState.submissionStatus === 'processing') {
+      return {
+        label: 'Captura temporalmente bloqueada',
+        disabled: true,
+        helperText: 'Hay otro envio en procesamiento para este partido.',
       };
     }
 
@@ -4383,6 +4526,7 @@
     const visualStatus = String(match.visualStatus || '').trim();
     const eventState = normalizeMyDayEventState_(match.eventState);
     if (eventState.pendingSubmission) return false;
+    if (eventState.submissionStatus === 'queued' || eventState.submissionStatus === 'processing') return false;
     const isCaptureWindow = visualStatus === 'En juego' || visualStatus === 'Cierre en curso';
     const isParticipant = !!(match.isReferee || match.isPlayerA || match.isPlayerB);
     const blockedByEvent = !!(eventState.resultSubmitted || eventState.autoClosed || eventState.tableBlocked);
@@ -4556,7 +4700,7 @@
     const rawLabel = String(option.textContent || option.innerText || '').trim();
     if (!rawLabel) return '';
     return rawLabel
-      .replace(new RegExp('\\s*[·•|-]\\s*' + escapeRegExp_(normalizedId) + '$'), '')
+      .replace(new RegExp('\\s*[ï¿½ï¿½|-]\\s*' + escapeRegExp_(normalizedId) + '$'), '')
       .replace(new RegExp('\\s+' + escapeRegExp_(normalizedId) + '$'), '')
       .trim();
   }
