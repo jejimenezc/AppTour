@@ -151,6 +151,221 @@ function getCheckedInPlayersForSelector() {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+function getResultsHistoryViewModel() {
+  const tournamentStatus = String(getConfigValue('tournament_status') || '').trim();
+  const resolvedMatches = getMatches()
+    .filter(function (match) {
+      return isMatchResolved(match) && !isByeAdvanceMatch(match);
+    })
+    .sort(function (left, right) {
+      const leftTs = String(left.submitted_at || '').trim();
+      const rightTs = String(right.submitted_at || '').trim();
+      if (leftTs !== rightTs) return leftTs.localeCompare(rightTs);
+      return String(left.match_id || '').localeCompare(String(right.match_id || ''));
+    });
+
+  const items = resolvedMatches.map(function (match) {
+    const winnerLabel = resolveCompetitorLabel(match.winner_id, match.phase_type);
+    return {
+      matchId: String(match.match_id || '').trim(),
+      submittedAt: normalizeDateTimeText(match.submitted_at),
+      phaseLabel: buildPublicPhaseLabel(match),
+      matchupLabel: buildMatchupLabel(match),
+      winnerLabel: winnerLabel,
+      resultLabel: buildHistoricalResultLabel_(match),
+      tableLabel: String(match.table_no || '').trim() ? `Mesa ${match.table_no}` : '',
+      blockLabel: String(match.block_id || '').trim() ? `Bloque ${match.block_id}` : '',
+      sourceLabel: String(match.result_source || '').trim() || 'manual',
+    };
+  });
+
+  return {
+    tournamentStatus: tournamentStatus,
+    summary: {
+      total: items.length,
+      groups: items.filter(function (item) { return item.phaseLabel.indexOf('Grupos') >= 0; }).length,
+      doubles: items.filter(function (item) { return item.phaseLabel.indexOf('Dobles') >= 0; }).length,
+      singles: items.filter(function (item) { return item.phaseLabel.indexOf('Singles') >= 0 && item.phaseLabel.indexOf('Grupos') < 0; }).length,
+    },
+    items: items,
+    generatedAt: nowIso(),
+    snapshotVersion: String(Date.now()),
+    statusNote: items.length
+      ? 'Vista historica de resultados ya cerrados. El orden sigue el momento de registro del resultado.'
+      : 'Aun no hay resultados finales registrados para mostrar.',
+  };
+}
+
+function getResultsHistoryViewModelFromUi() {
+  const vm = getResultsHistoryViewModel();
+  publishResultsHistoryViewToFirebase();
+  return vm;
+}
+
+function buildHistoricalResultLabel_(match) {
+  const mode = String(match.result_mode || '').trim();
+  if (mode === 'final' && isValidFinalSets(match.sets_a, match.sets_b)) {
+    return `${match.sets_a}-${match.sets_b}`;
+  }
+  if (mode === 'wo') return 'WO';
+  return 'Resultado cerrado';
+}
+
+function getRankingPointRules_() {
+  return {
+    groups: {
+      1: 120,
+      2: 80,
+      3: 50,
+    },
+    doubles: {
+      R16: 35,
+      QF: 60,
+      SF: 100,
+      FINALIST: 140,
+      CHAMPION: 200,
+    },
+    singles: {
+      oro: { R16: 50, QF: 90, SF: 140, FINALIST: 200, CHAMPION: 280 },
+      plata: { R16: 40, QF: 70, SF: 110, FINALIST: 160, CHAMPION: 220 },
+      cobre: { R16: 30, QF: 55, SF: 85, FINALIST: 125, CHAMPION: 180 },
+      default: { R16: 30, QF: 55, SF: 85, FINALIST: 125, CHAMPION: 180 },
+    },
+  };
+}
+
+function getRankingLeaderboardViewModel() {
+  const tournamentStatus = String(getConfigValue('tournament_status') || '').trim();
+  const tournamentPlayers = getTournamentPlayers();
+  const rules = getRankingPointRules_();
+  const rowMap = {};
+
+  tournamentPlayers.forEach(function (player) {
+    const playerId = String(player.player_id || '').trim();
+    if (!playerId) return;
+    rowMap[playerId] = {
+      playerId: playerId,
+      playerName: resolvePlayerFullName(playerId),
+      totalPoints: 0,
+      breakdown: [],
+    };
+  });
+
+  tournamentPlayers.forEach(function (player) {
+    const playerId = String(player.player_id || '').trim();
+    const rank = Number(player.group_rank || 0);
+    const points = Number(rules.groups[rank] || 0);
+    if (!playerId || !points || !rowMap[playerId]) return;
+    appendRankingPoints_(rowMap[playerId], 'Groups', `Grupo ${rank}`, points);
+  });
+
+  const awardedStageKeys = {};
+  getMatches()
+    .filter(function (match) {
+      return isMatchResolved(match) && !isByeAdvanceMatch(match);
+    })
+    .forEach(function (match) {
+      const phaseType = String(match.phase_type || '').trim();
+      const roundLabel = getVisibleRoundLabel_(String(match.round_label || '').trim()) || String(match.round_label || '').trim().toUpperCase();
+      const winnerIds = resolveMatchParticipantPlayerIds_(match.winner_id, phaseType);
+      const loserIds = buildResolvedMatchLoserPlayerIds_(match);
+
+      if (phaseType === 'doubles') {
+        if (String(roundLabel || '').toUpperCase() === 'FINAL') {
+          awardStagePointsToPlayers_(rowMap, awardedStageKeys, winnerIds, 'doubles_champion', 'Dobles', 'Campeon dobles', rules.doubles.CHAMPION);
+          awardStagePointsToPlayers_(rowMap, awardedStageKeys, loserIds, 'doubles_finalist', 'Dobles', 'Final dobles', rules.doubles.FINALIST);
+        } else {
+          const stageKey = String(roundLabel || '').toUpperCase();
+          const points = Number(rules.doubles[stageKey] || 0);
+          if (points) {
+            awardStagePointsToPlayers_(rowMap, awardedStageKeys, loserIds, `doubles_${stageKey}`, 'Dobles', `Dobles ${stageKey}`, points);
+          }
+        }
+        return;
+      }
+
+      if (phaseType === 'singles') {
+        const bracketType = String(match.bracket_type || 'default').trim().toLowerCase();
+        const bracketRules = rules.singles[bracketType] || rules.singles.default;
+        if (String(roundLabel || '').toUpperCase() === 'FINAL') {
+          awardStagePointsToPlayers_(rowMap, awardedStageKeys, winnerIds, `singles_${bracketType}_champion`, 'Singles', `${capitalizeStageLabel_(bracketType)} campeon`, Number(bracketRules.CHAMPION || 0));
+          awardStagePointsToPlayers_(rowMap, awardedStageKeys, loserIds, `singles_${bracketType}_finalist`, 'Singles', `${capitalizeStageLabel_(bracketType)} final`, Number(bracketRules.FINALIST || 0));
+        } else {
+          const stageKey = String(roundLabel || '').toUpperCase();
+          const points = Number(bracketRules[stageKey] || 0);
+          if (points) {
+            awardStagePointsToPlayers_(rowMap, awardedStageKeys, loserIds, `singles_${bracketType}_${stageKey}`, 'Singles', `${capitalizeStageLabel_(bracketType)} ${stageKey}`, points);
+          }
+        }
+      }
+    });
+
+  const rows = Object.keys(rowMap)
+    .map(function (playerId) { return rowMap[playerId]; })
+    .sort(function (left, right) {
+      if (right.totalPoints !== left.totalPoints) return right.totalPoints - left.totalPoints;
+      return String(left.playerName || '').localeCompare(String(right.playerName || ''));
+    })
+    .map(function (row, index) {
+      return Object.assign({}, row, { position: index + 1 });
+    });
+
+  return {
+    tournamentStatus: tournamentStatus,
+    rulesNote: 'Modelo V1 informativo: suma puntos asegurados por grupo y por eliminacion cerrada. La tabla se puede afinar luego.',
+    summary: {
+      players: rows.length,
+      scoredPlayers: rows.filter(function (row) { return Number(row.totalPoints || 0) > 0; }).length,
+    },
+    rows: rows,
+    generatedAt: nowIso(),
+    snapshotVersion: String(Date.now()),
+  };
+}
+
+function getRankingLeaderboardViewModelFromUi() {
+  const vm = getRankingLeaderboardViewModel();
+  publishRankingLeaderboardViewToFirebase();
+  return vm;
+}
+
+function buildResolvedMatchLoserPlayerIds_(match) {
+  const winnerId = String(match.winner_id || '').trim();
+  const leftId = String(match.player_a_id || '').trim();
+  const rightId = String(match.player_b_id || '').trim();
+  const losingEntryId = winnerId === leftId ? rightId : winnerId === rightId ? leftId : '';
+  return resolveMatchParticipantPlayerIds_(losingEntryId, match.phase_type);
+}
+
+function awardStagePointsToPlayers_(rowMap, awardedStageKeys, playerIds, stageKey, phaseLabel, stageLabel, points) {
+  const ids = Array.isArray(playerIds) ? playerIds : [];
+  ids.forEach(function (playerId) {
+    const normalizedPlayerId = String(playerId || '').trim();
+    if (!normalizedPlayerId || !rowMap[normalizedPlayerId]) return;
+    const key = `${normalizedPlayerId}::${stageKey}`;
+    if (awardedStageKeys[key]) return;
+    awardedStageKeys[key] = true;
+    appendRankingPoints_(rowMap[normalizedPlayerId], phaseLabel, stageLabel, points);
+  });
+}
+
+function appendRankingPoints_(row, phaseLabel, stageLabel, points) {
+  const value = Number(points || 0);
+  if (!row || !value) return;
+  row.totalPoints += value;
+  row.breakdown.push({
+    phaseLabel: String(phaseLabel || '').trim(),
+    stageLabel: String(stageLabel || '').trim(),
+    points: value,
+  });
+}
+
+function capitalizeStageLabel_(value) {
+  const text = String(value || '').trim();
+  if (!text) return 'Etapa';
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
 function getSinglesGroupsViewModel(selectedPlayerId) {
   const tournamentStatus = String(getConfigValue('tournament_status') || '').trim();
   const checkedInPlayers = getTournamentPlayers();
@@ -1102,6 +1317,7 @@ function startDemoTournamentNowFromUi() {
 function publishRealtimeSnapshotAfterMutation_(result, playerIds) {
   publishRealtimeSnapshotToFirebase();
   publishPlayerSelectorOptionsToFirebase();
+  publishInformationalViewsToFirebase();
   if (playerIds && playerIds.length) {
     publishPlayerRealtimeViewsToFirebase(playerIds);
   }
@@ -1111,6 +1327,7 @@ function publishRealtimeSnapshotAfterMutation_(result, playerIds) {
 function publishStructuralRealtimeAfterMutation_(result) {
   publishRealtimeSnapshotToFirebase();
   publishPlayerSelectorOptionsToFirebase();
+  publishInformationalViewsToFirebase();
   publishAllMyDayViewModelsToFirebase();
   return result;
 }
@@ -1118,6 +1335,7 @@ function publishStructuralRealtimeAfterMutation_(result) {
 function publishRealtimeAfterDoublesMutation_(result) {
   publishRealtimeSnapshotToFirebase();
   publishPlayerSelectorOptionsToFirebase();
+  publishInformationalViewsToFirebase();
   publishAllDoublesViewModelsToFirebase();
   return result;
 }

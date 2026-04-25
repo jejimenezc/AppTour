@@ -125,6 +125,35 @@ function publishDoublesViewModelToFirebase(playerId) {
   };
 }
 
+function publishResultsHistoryViewToFirebase() {
+  const vm = getResultsHistoryViewModel();
+  writeFirebaseNode_('views/resultsHistory', vm);
+
+  return {
+    ok: true,
+    generatedAt: String(vm.generatedAt || '').trim(),
+    snapshotVersion: String(vm.snapshotVersion || '').trim(),
+  };
+}
+
+function publishRankingLeaderboardViewToFirebase() {
+  const vm = getRankingLeaderboardViewModel();
+  writeFirebaseNode_('views/rankingLeaderboard', vm);
+
+  return {
+    ok: true,
+    generatedAt: String(vm.generatedAt || '').trim(),
+    snapshotVersion: String(vm.snapshotVersion || '').trim(),
+  };
+}
+
+function publishInformationalViewsToFirebase() {
+  return {
+    resultsHistory: publishResultsHistoryViewToFirebase(),
+    rankingLeaderboard: publishRankingLeaderboardViewToFirebase(),
+  };
+}
+
 function publishPlayerRealtimeViewsToFirebase(playerIds) {
   const ids = Array.isArray(playerIds) ? playerIds : [playerIds];
   const normalizedIds = ids
