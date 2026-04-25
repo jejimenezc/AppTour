@@ -197,6 +197,12 @@
       refreshCurrentPlayerExperience({ silent: true });
     }
     if (nextScreen === 'doubles') {
+      const savedPlayerId = getSavedPlayerId();
+      if (savedPlayerId) {
+        subscribeRealtimeDoubles(savedPlayerId);
+        startDoublesRealtimeBootstrap_(savedPlayerId, true);
+        loadDoublesConfig({ silent: true, forceServer: true });
+      }
       refreshCurrentPlayerExperience({ silent: true });
     }
     handleControlHeartbeatScreenChange_();
@@ -869,10 +875,23 @@
     });
   }
 
+  function getDoublesRealtimeReferenceNowMs_() {
+    const projectedClock = getProjectedClockSnapshot_();
+    if (projectedClock && Number(projectedClock.realNowMs || 0) > 0) {
+      return Number(projectedClock.realNowMs || 0);
+    }
+
+    if (appHeaderClockSnapshot && Number(appHeaderClockSnapshot.serverNowMs || appHeaderClockSnapshot.realNowMs || 0) > 0) {
+      return Number(appHeaderClockSnapshot.serverNowMs || appHeaderClockSnapshot.realNowMs || 0);
+    }
+
+    return Date.now();
+  }
+
   function normalizeDoublesPendingIntents_(rawValue) {
     if (!rawValue || typeof rawValue !== 'object') return [];
 
-    const nowMs = Date.now();
+    const nowMs = getDoublesRealtimeReferenceNowMs_();
 
     return Object.keys(rawValue)
       .map(function (intentId) {
@@ -903,7 +922,7 @@
   }
 
   function getCurrentActiveDoublesPendingIntents_() {
-    const nowMs = Date.now();
+    const nowMs = getDoublesRealtimeReferenceNowMs_();
     currentDoublesPendingIntents = (currentDoublesPendingIntents || []).filter(function (intent) {
       return Number(intent && intent.expiresAtMs || 0) > nowMs;
     });
@@ -2703,7 +2722,7 @@
   }
 
   function buildDoublesProposalPayload_(playerId, targetPlayerId) {
-    const createdAtMs = Date.now();
+    const createdAtMs = getDoublesRealtimeReferenceNowMs_();
     const actorPlayerId = String(playerId || '').trim();
     const normalizedTargetPlayerId = String(targetPlayerId || '').trim();
     const expiresAtMs = createdAtMs + (2 * 60 * 1000);
@@ -4020,7 +4039,7 @@
     }
     subscribeRealtimeViewModels(playerId);
     startMyDayRealtimeBootstrap_(playerId, !!isAutoLoad);
-    loadDoublesConfig({ silent: true });
+    loadDoublesConfig({ silent: true, forceServer: true });
   }
 
   function loadMyDayForPlayer(playerId, options) {
