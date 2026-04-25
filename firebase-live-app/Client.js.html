@@ -113,11 +113,8 @@
   });
 
   function initializeAppScreens() {
-    const savedScreen = getSavedAppScreen();
-    const initialScreen = !adminAccessGranted && (savedScreen === 'admin' || savedScreen === 'groups')
-      ? 'public'
-      : savedScreen;
-    setActiveAppScreen(initialScreen || 'public');
+    saveAppScreen('public');
+    setActiveAppScreen('public');
   }
 
   function initializeControlHeartbeatState() {
@@ -275,6 +272,7 @@
     if (error) error.textContent = '';
     if (input) input.value = '';
     modal.hidden = false;
+    modal.style.display = 'flex';
 
     window.setTimeout(function () {
       if (input && typeof input.focus === 'function') input.focus();
@@ -288,7 +286,10 @@
     if (error) error.textContent = '';
     if (input) input.value = '';
     pendingAdminTargetScreen = '';
-    if (modal) modal.hidden = true;
+    if (modal) {
+      modal.hidden = true;
+      modal.style.display = 'none';
+    }
   }
 
   function handleAdminAccessPinKeydown(event) {

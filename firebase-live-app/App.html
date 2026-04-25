@@ -3,9 +3,9 @@
     <section class="card app-shell-header">
       <div class="row-between" style="align-items: flex-start; gap: 12px; flex-wrap: wrap;">
         <div>
-          <p class="subtitle">Torneo tenis de mesa</p>
+          <p class="subtitle">Torneo All-inn de tenis de mesa</p>
           <h1 class="title">AppTour</h1>
-          <p class="helper">Una sola vista operativa a la vez, pensada para usar el campeonato en la mano.</p>
+          <p class="helper">El campeonato en la palma de tu mano.</p>
           <div class="helper" id="app-clock-header" style="margin-top: 8px;">
             Cronometro del torneo: --:--:-- | Estado: sin snapshot | Hora interna: -
           </div>
@@ -72,7 +72,7 @@
       <section class="card">
         <div class="row-between" style="margin-bottom: 12px;">
           <h2 class="section-title" style="margin: 0;">Partidos visibles</h2>
-          <div id="refresh-indicator" class="helper">Actualizacion automatica activada</div>
+          <div id="refresh-indicator" class="helper">Actualización automatica activada</div>
         </div>
         <div id="public-phase-gadget" class="public-phase-gadget" style="margin-bottom: 12px;">
           <span class="public-phase-gadget__led public-phase-gadget__led--idle"></span>
@@ -95,7 +95,7 @@
           <div>
             <p class="subtitle">Vista personal</p>
             <h2 class="section-title" style="margin: 0;">Mi jornada</h2>
-            <p class="helper" style="margin-top: 6px;">Consulta tu rol actual, compromiso del bloque y acceso rapido a captura.</p>
+            <p class="helper" style="margin-top: 6px;">Consulta tu rol actual, compromiso del bloque y acceso rápido a captura.</p>
           </div>
         </div>
 
@@ -129,7 +129,7 @@
       <section class="card">
         <div class="row-between" style="margin-bottom: 12px; align-items: flex-end;">
           <div>
-            <p class="subtitle">Configuracion previa</p>
+            <p class="subtitle">Configuración previa</p>
             <h2 class="section-title" style="margin: 0;">Partners dobles</h2>
             <p class="helper" style="margin-top: 6px;">Confirma pareja, entra al pool o revisa el estado general usando el jugador seleccionado en Mi jornada.</p>
           </div>
@@ -140,7 +140,7 @@
         </div>
 
         <div id="doubles-config-content">
-          <div class="loading">Cargando configuracion de dobles...</div>
+          <div class="loading">Cargando configuración de dobles...</div>
         </div>
       </section>
     </div>
@@ -150,7 +150,7 @@
         <div class="row-between" style="margin-bottom: 12px; align-items: flex-end; flex-wrap: wrap;">
           <div>
             <p class="subtitle">Solo lectura</p>
-            <h2 class="section-title" style="margin: 0;">Resultados historicos</h2>
+            <h2 class="section-title" style="margin: 0;">Resultados históricos</h2>
             <p class="helper" style="margin-top: 6px;">Partidos ya cerrados, ordenados por registro de resultado.</p>
           </div>
 
@@ -332,11 +332,11 @@
 <div
   id="admin-access-modal"
   hidden
-  style="position: fixed; inset: 0; z-index: 4000; background: rgba(15, 23, 42, 0.52); display: flex; align-items: center; justify-content: center; padding: 20px;"
+  style="position: fixed; inset: 0; z-index: 4000; background: rgba(15, 23, 42, 0.52); display: none; align-items: center; justify-content: center; padding: 20px;"
 >
   <div class="card" style="width: min(100%, 420px); margin: 0;">
-    <div class="row-between" style="align-items: flex-start; gap: 12px;">
-      <div>
+    <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: nowrap;">
+      <div style="min-width: 0; flex: 1 1 auto;">
         <p class="subtitle">Acceso restringido</p>
         <h2 class="section-title" style="margin: 0;">Admin</h2>
         <p class="helper" style="margin-top: 6px;">Ingresa el PIN del dispositivo administrador para abrir el panel de control.</p>
@@ -345,10 +345,10 @@
       <button
         type="button"
         onclick="closeAdminAccessModal()"
-        style="border: 0; background: transparent; color: #475569; font-size: 18px; line-height: 1; cursor: pointer;"
+        style="border: 0; background: transparent; color: #475569; font-size: 20px; line-height: 1; cursor: pointer; padding: 0; align-self: flex-start; flex: 0 0 auto;"
         aria-label="Cerrar acceso admin"
       >
-        ×
+        &times;
       </button>
     </div>
 
