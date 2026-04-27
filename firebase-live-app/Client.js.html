@@ -36,6 +36,7 @@
   let publicHighestSnapshotVersionSeen = '';
   let currentMyDayVm = null;
   let currentSinglesGroupsVm = null;
+  let singlesGroupsActionInFlight = false;
   let currentDoublesBaseVm = null;
   let currentDoublesVm = null;
   let currentResultsVm = null;
@@ -2446,6 +2447,7 @@
 
   function renderSinglesGroupsConfig(vm) {
     currentSinglesGroupsVm = vm;
+    singlesGroupsActionInFlight = false;
     renderAdminGroupsEntryCard();
 
     const root = document.getElementById('singles-groups-content');
@@ -2458,13 +2460,13 @@
 
     const actionButtons = [
       capabilities.canPrepareWindow
-        ? '<button class="admin-action-button" onclick="submitSinglesGroupsAction(\'open_window\')">Preparar grupos</button>'
+        ? '<button id="singles-groups-open-window-button" class="admin-action-button" onclick="submitSinglesGroupsAction(\'open_window\')">Preparar grupos</button>'
         : '',
       capabilities.canRecalculate
-        ? '<button class="admin-action-button admin-action-button-secondary" onclick="submitSinglesGroupsAction(\'recalculate\')">Recalcular propuesta</button>'
+        ? '<button id="singles-groups-recalculate-button" class="admin-action-button admin-action-button-secondary" onclick="submitSinglesGroupsAction(\'recalculate\')">Recalcular propuesta</button>'
         : '',
       capabilities.canConfirm
-        ? '<button class="admin-action-button" onclick="submitSinglesGroupsAction(\'confirm_groups\')">Confirmar grupos</button>'
+        ? '<button id="singles-groups-confirm-button" class="admin-action-button" onclick="submitSinglesGroupsAction(\'confirm_groups\')">Confirmar grupos</button>'
         : ''
     ].filter(Boolean).join('');
 
@@ -2610,6 +2612,7 @@
   }
 
   function renderSinglesGroupsConfigError(error) {
+    singlesGroupsActionInFlight = false;
     renderAdminGroupsEntryCard();
     const root = document.getElementById('singles-groups-content');
     if (!root) return;
@@ -2629,15 +2632,22 @@
   }
 
   function submitSinglesGroupsAction(action, extraPayload) {
+    if (singlesGroupsActionInFlight) return;
     const payload = extraPayload || {};
     const playerId = getSavedGroupsPlayerId();
+    const actionName = String(action || '').trim();
+    singlesGroupsActionInFlight = true;
+    setSinglesGroupsActionLoadingState_(actionName, true);
 
     google.script.run
       .withSuccessHandler(function (vm) {
         renderSinglesGroupsConfig(vm);
         loadAdminControl();
       })
-      .withFailureHandler(renderSinglesGroupsConfigError)
+      .withFailureHandler(function (error) {
+        setSinglesGroupsActionLoadingState_(actionName, false);
+        renderSinglesGroupsConfigError(error);
+      })
       .applySinglesGroupsActionFromUi({
         action: action,
         playerId: playerId,
@@ -2645,6 +2655,40 @@
         targetGroupId: payload.targetGroupId || '',
         targetSlot: payload.targetSlot || '',
       });
+  }
+
+  function setSinglesGroupsActionLoadingState_(action, isLoading) {
+    const actionRoot = document.querySelector('#singles-groups-content .doubles-actions-grid');
+    if (actionRoot) {
+      const buttons = actionRoot.querySelectorAll('.admin-action-button');
+      buttons.forEach(function (button) {
+        button.disabled = !!isLoading;
+      });
+    }
+
+    const buttonId = action === 'confirm_groups'
+      ? 'singles-groups-confirm-button'
+      : action === 'recalculate'
+        ? 'singles-groups-recalculate-button'
+        : action === 'open_window'
+          ? 'singles-groups-open-window-button'
+          : '';
+    if (!buttonId) return;
+
+    const button = document.getElementById(buttonId);
+    if (!button) return;
+
+    if (!isLoading) {
+      if (action === 'confirm_groups') button.textContent = 'Confirmar grupos';
+      else if (action === 'recalculate') button.textContent = 'Recalcular propuesta';
+      else if (action === 'open_window') button.textContent = 'Preparar grupos';
+      return;
+    }
+
+    button.innerHTML = `
+      <span class="doubles-loading-spinner" aria-hidden="true" style="width: 14px; height: 14px; border-width: 2px; margin-right: 8px; display: inline-block; vertical-align: middle;"></span>
+      <span style="vertical-align: middle;">${escapeHtml(action === 'confirm_groups' ? 'Confirmando...' : action === 'recalculate' ? 'Recalculando...' : 'Preparando...')}</span>
+    `;
   }
 
   function getActiveProposalIntentByPlayer_(playerId) {

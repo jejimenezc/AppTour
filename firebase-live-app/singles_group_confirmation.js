@@ -169,49 +169,77 @@ function validateSinglesGroupCheckpoint() {
  * - set status running_groups
  */
 function confirmSinglesGroupsAndStartGroupStage() {
-  const validation = validateSinglesGroupCheckpoint();
-  if (!validation.ok) {
-    throw new Error(`No se puede confirmar grupos:\n- ${validation.errors.join('\n- ')}`);
-  }
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
 
-  const tournamentPlayerLookup = getTournamentPlayerIdLookup();
-  const allPlayers = getPlayers();
+  try {
+    const tournamentStatus = String(getConfigValue('tournament_status') || '').trim();
+    if (tournamentStatus !== 'awaiting_singles_group_confirmation') {
+      throw new Error(`No se puede confirmar grupos desde el estado actual: ${tournamentStatus || 'sin estado'}.`);
+    }
 
-  replaceAllRows('Groups', []);
+    if (hasConfirmedSinglesGroupsArtifactsForCheckpoint_()) {
+      throw new Error('La fase de grupos ya fue confirmada o se encuentra en construcción. Evita relanzar el checkpoint.');
+    }
 
-  const nonGroupMatches = getMatches().filter(m => String(m.phase_type) !== 'groups');
-  replaceAllRows('Matches', nonGroupMatches);
+    const validation = validateSinglesGroupCheckpoint();
+    if (!validation.ok) {
+      throw new Error(`No se puede confirmar grupos:\n- ${validation.errors.join('\n- ')}`);
+    }
 
-  const nonGroupBlocks = getBlocks().filter(b => String(b.phase_type) !== 'groups');
-  replaceAllRows('Blocks', nonGroupBlocks);
+    const tournamentPlayerLookup = getTournamentPlayerIdLookup();
+    const allPlayers = getPlayers();
 
-  allPlayers.forEach(player => {
-    const isTournamentPlayer = !!tournamentPlayerLookup[String(player.player_id)];
+    replaceAllRows('Groups', []);
 
-    updatePlayer(player.player_id, {
-      group_id: isTournamentPlayer ? player.proposed_group_id : '',
-      group_slot: isTournamentPlayer ? player.proposed_group_slot : '',
-      group_rank: '',
-      singles_bracket: '',
-      singles_status: 'active',
-      current_role: 'idle',
-      current_block_id: '',
+    const nonGroupMatches = getMatches().filter(m => String(m.phase_type) !== 'groups');
+    replaceAllRows('Matches', nonGroupMatches);
+
+    const nonGroupBlocks = getBlocks().filter(b => String(b.phase_type) !== 'groups');
+    replaceAllRows('Blocks', nonGroupBlocks);
+
+    allPlayers.forEach(player => {
+      const isTournamentPlayer = !!tournamentPlayerLookup[String(player.player_id)];
+
+      updatePlayer(player.player_id, {
+        group_id: isTournamentPlayer ? player.proposed_group_id : '',
+        group_slot: isTournamentPlayer ? player.proposed_group_slot : '',
+        group_rank: '',
+        singles_bracket: '',
+        singles_status: 'active',
+        current_role: 'idle',
+        current_block_id: '',
+      });
     });
+
+    buildGroupsSheetFromPlayers();
+    createInitialGroupBlocksAfterExistingBlocks();
+    generateGroupStageMatchesAfterExistingMatches();
+
+    const firstGroupBlock = getBlocks()
+      .filter(b => String(b.phase_type) === 'groups')
+      .sort((a, b) => Number(a.block_id) - Number(b.block_id))[0];
+
+    if (firstGroupBlock) {
+      setConfigValue('current_block_id', firstGroupBlock.block_id, 'Bloque actual');
+    }
+
+    setConfigValue('tournament_status', 'running_groups', 'Fase de grupos en curso');
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function hasConfirmedSinglesGroupsArtifactsForCheckpoint_() {
+  const hasGroupsSheetRows = getRows('Groups').length > 0;
+  const hasGroupMatches = getMatches().some(function (match) {
+    return String(match.phase_type || '').trim() === 'groups';
+  });
+  const hasGroupBlocks = getBlocks().some(function (block) {
+    return String(block.phase_type || '').trim() === 'groups';
   });
 
-  buildGroupsSheetFromPlayers();
-  createInitialGroupBlocksAfterExistingBlocks();
-  generateGroupStageMatchesAfterExistingMatches();
-
-  const firstGroupBlock = getBlocks()
-    .filter(b => String(b.phase_type) === 'groups')
-    .sort((a, b) => Number(a.block_id) - Number(b.block_id))[0];
-
-  if (firstGroupBlock) {
-    setConfigValue('current_block_id', firstGroupBlock.block_id, 'Bloque actual');
-  }
-
-  setConfigValue('tournament_status', 'running_groups', 'Fase de grupos en curso');
+  return hasGroupsSheetRows || hasGroupMatches || hasGroupBlocks;
 }
 
 /**
